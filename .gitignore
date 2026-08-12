@@ -1,0 +1,29 @@
+# OS-generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+npm-debug.log*
+
+# This project currently has no build step, but keep these ignored in case
+# tooling (a bundler, linter, formatter, etc.) is added later.
+node_modules/
+dist/
+build/
+.cache/
+.env
+.env.local

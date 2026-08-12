@@ -1,0 +1,2435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Vegas Strip Blackjack</title>
+
+<!-- PWA: installable + fully offline via manifest.json + sw.js (relative
+     paths throughout, so this works whether hosted at a domain root or a
+     sub-path like a GitHub Pages project site). -->
+<link rel="manifest" href="./manifest.json">
+<meta name="theme-color" content="#0c3d24">
+<link rel="icon" href="./icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="./icon-192.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Blackjack">
+
+<style>
+/* ============================================================
+   THEME
+   ============================================================ */
+:root{
+  --felt-dark:#04150c;
+  --felt:#0c3d24;
+  --felt-light:#166339;
+  --gold:#d4af37;
+  --gold-light:#f3d98a;
+  --gold-dim:rgba(212,175,55,.35);
+  --card-bg:#faf7ee;
+  --ink:#1a1a1a;
+  --red:#a91d2e;
+  --panel-bg:rgba(5,18,12,.88);
+  --panel-border:rgba(212,175,55,.4);
+  --win:#3ddc84;
+  --lose:#ff5d5d;
+  --push:#e8c766;
+  --serif:Georgia,'Times New Roman',serif;
+  --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;height:100%;}
+body{
+  height:100dvh;
+  height:100vh; /* fallback for browsers without dvh */
+  color:#f1ead9;
+  font-family:var(--sans);
+  background:
+    radial-gradient(ellipse at 50% -10%, #163 0%, transparent 60%),
+    radial-gradient(circle at 50% 50%, var(--felt-light) 0%, var(--felt) 45%, var(--felt-dark) 100%);
+  background-attachment:fixed;
+  position:relative;
+  overflow:hidden;
+}
+body::before{
+  content:"";
+  position:fixed;inset:0;
+  pointer-events:none;
+  opacity:.05;
+  mix-blend-mode:overlay;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  z-index:0;
+}
+/* Everything must fit within one viewport height — .wrap is a fixed-height
+   flex column and every section inside it either has a fixed/auto height
+   (chrome: topbar, controls, footer) or flexes to fill the remainder (the
+   felt table), with min-height:0 so flex children can shrink instead of
+   overflowing. Nothing in here should ever need page-level scrolling. */
+.wrap{
+  max-width:1080px;margin:0 auto;position:relative;z-index:1;
+  height:100dvh;height:100vh;max-height:100dvh;max-height:100vh;
+  padding:8px 12px;
+  display:flex;flex-direction:column;gap:6px;
+  overflow:hidden;
+}
+
+/* ============================================================
+   TOP BAR
+   ============================================================ */
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;flex:0 0 auto;}
+.brand{font-family:var(--serif);font-size:1.5rem;letter-spacing:.05em;color:var(--gold-light);text-shadow:0 2px 6px rgba(0,0,0,.6);}
+.brand small{display:block;font-family:var(--sans);font-size:.62rem;letter-spacing:.25em;color:var(--gold-dim);font-weight:600;}
+.topbar-right{display:flex;gap:8px;align-items:center;flex-wrap:wrap;min-width:0;}
+.topbar-buttons{display:flex;gap:8px;}
+.icon-btn{
+  background:rgba(0,0,0,.35);border:1px solid var(--panel-border);color:var(--gold-light);
+  border-radius:8px;padding:7px 12px;font-size:.8rem;cursor:pointer;font-family:var(--sans);
+  transition:background .15s,transform .1s;
+}
+.icon-btn:hover{background:rgba(212,175,55,.18);}
+.icon-btn:active{transform:scale(.96);}
+.shoe-info{font-size:.68rem;color:#cfd8cf;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:5px 9px;display:flex;gap:6px;align-items:center;}
+.pen-bar{width:50px;height:6px;border-radius:4px;background:rgba(255,255,255,.15);overflow:hidden;position:relative;}
+.pen-bar i{display:block;height:100%;background:linear-gradient(90deg,var(--gold),var(--gold-light));}
+.cut-mark{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--red);}
+
+/* Small always-visible toggles (Show Count / Advisor) that live in the
+   topbar so revealing the advisor never costs any vertical layout space
+   until the panel is actually opened. */
+.mini-toggle{
+  display:flex;align-items:center;gap:4px;font-size:.68rem;color:#cfd8cf;
+  background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.08);border-radius:8px;
+  padding:5px 8px;cursor:pointer;user-select:none;white-space:nowrap;
+}
+.mini-toggle input{accent-color:var(--gold);width:13px;height:13px;}
+.count-badge{
+  font-family:var(--serif);background:rgba(0,0,0,.35);border:1px solid var(--panel-border);border-radius:8px;
+  padding:4px 9px;color:var(--gold-light);font-size:.72rem;white-space:nowrap;
+  opacity:0;transform:scale(.95);transition:opacity .3s ease,transform .3s ease;
+}
+.count-badge.show{opacity:1;transform:scale(1);}
+
+/* ============================================================
+   FELT TABLE
+   ============================================================ */
+.felt{
+  position:relative;
+  border-radius:22px;
+  padding:10px 12px 8px;
+  background:
+    radial-gradient(ellipse at 50% 20%, var(--felt-light) 0%, var(--felt) 55%, var(--felt-dark) 100%);
+  box-shadow:
+    0 0 0 2px rgba(0,0,0,.4),
+    0 0 0 5px var(--gold-dim),
+    inset 0 0 50px rgba(0,0,0,.55),
+    0 14px 34px rgba(0,0,0,.55);
+  flex:1 1 auto;
+  min-height:0;
+  display:flex;flex-direction:column;justify-content:space-between;
+  overflow:hidden;
+}
+.felt::after{
+  content:"";
+  position:absolute;left:50%;top:66%;
+  width:120%;height:220px;
+  transform:translateX(-50%);
+  border:2px solid var(--gold-dim);
+  border-radius:50%;
+  pointer-events:none;
+}
+.zone{display:flex;flex-direction:column;align-items:center;position:relative;z-index:2;min-height:0;flex:0 0 auto;}
+.zone-label{font-family:var(--serif);font-size:.62rem;letter-spacing:.3em;color:var(--gold-dim);margin-bottom:2px;text-transform:uppercase;}
+.hand-row{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;min-height:0;align-items:flex-start;}
+.cards{display:flex;position:relative;min-height:0;align-items:flex-start;justify-content:center;}
+.cards .card-slot{margin-left:-28px;}
+.cards .card-slot:first-child{margin-left:0;}
+.hand-total{
+  margin-top:2px;font-family:var(--serif);font-size:.8rem;color:var(--gold-light);
+  background:rgba(0,0,0,.35);border-radius:7px;padding:1px 8px;min-height:18px;
+}
+.dealer-zone{margin-bottom:2px;}
+.mid-zone{min-height:0;flex:0 0 auto;display:flex;align-items:center;justify-content:center;position:relative;z-index:3;}
+.result-banner{
+  font-family:var(--serif);font-size:1.1rem;font-weight:700;text-align:center;
+  padding:4px 18px;border-radius:12px;background:rgba(0,0,0,.55);
+  border:1px solid var(--gold-dim);opacity:0;transform:translateY(6px) scale(.92);
+  transition:opacity .35s ease, transform .35s ease;text-shadow:0 2px 8px rgba(0,0,0,.7);
+}
+.result-banner.show{opacity:1;transform:translateY(0) scale(1);}
+.result-banner.win{color:var(--win);}
+.result-banner.lose{color:var(--lose);}
+.result-banner.push{color:var(--push);}
+
+.hand-groups{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;width:100%;}
+.hand-group{position:relative;padding:6px 6px 4px;border-radius:12px;transition:box-shadow .25s;}
+.hand-group.is-active{box-shadow:0 0 0 2px var(--gold-light), 0 0 18px rgba(212,175,55,.45);background:rgba(212,175,55,.06);}
+.hand-group.is-win{animation:glowPulse 1.1s ease 2;}
+.hand-group.is-bust{animation:shake .5s ease;}
+.hand-tag{position:absolute;top:-8px;left:50%;transform:translateX(-50%);font-size:.56rem;letter-spacing:.15em;background:var(--gold);color:#1a1a1a;padding:1px 7px;border-radius:8px;font-weight:700;}
+
+.betting-circle{
+  width:110px;height:64px;margin:4px auto 2px;border-radius:50%;
+  border:2px dashed var(--gold-dim);
+  background:radial-gradient(ellipse at center, rgba(0,0,0,.25), transparent 70%);
+  display:flex;align-items:center;justify-content:center;position:relative;
+  flex:0 0 auto;
+}
+.bet-amount{font-family:var(--serif);font-size:.9rem;color:var(--gold-light);text-shadow:0 2px 6px #000;}
+.chips-in-play{position:absolute;inset:0;}
+.chip-stack-el{position:absolute;left:50%;top:50%;}
+
+/* ============================================================
+   CARD SVG
+   ============================================================ */
+.card-slot{width:70px;height:98px;position:relative;perspective:600px;filter:drop-shadow(0 4px 8px rgba(0,0,0,.5));}
+.card-inner{width:100%;height:100%;position:relative;transform-style:preserve-3d;transition:transform .5s cubic-bezier(.4,.2,.2,1);}
+.card-face,.card-back-face{position:absolute;inset:0;backface-visibility:hidden;border-radius:7px;overflow:hidden;}
+.card-back-face{transform:rotateY(180deg);}
+.card-slot.flipped .card-inner{transform:rotateY(180deg);}
+.card-slot svg{width:100%;height:100%;display:block;}
+/* Reduced-motion fallback: a quick fade + short straight slide, no arc or
+   rotation. The normal-motion deal is a JS-driven bezier arc (see
+   Render.dealCardArc in the script) applied via inline transforms, which is
+   why there is no CSS keyframe here for the full animation anymore. */
+.card-slot.deal-fallback{animation:dealFallback .15s ease-out both;}
+@keyframes dealFallback{
+  from{transform:translateY(-14px);opacity:0;}
+  to{transform:translateY(0);opacity:1;}
+}
+@keyframes glowPulse{
+  0%,100%{box-shadow:0 0 0 rgba(212,175,55,0);}
+  50%{box-shadow:0 0 26px 8px rgba(212,175,55,.75);}
+}
+@keyframes shake{
+  10%,90%{transform:translateX(-2px)}20%,80%{transform:translateX(4px)}
+  30%,50%,70%{transform:translateX(-9px)}40%,60%{transform:translateX(9px)}
+}
+/* Pulsing glow used to highlight the recommended action button and the
+   top-ranked win% figure when the Reveal Best Move panel is open. */
+@keyframes btnPulse{
+  0%,100%{box-shadow:0 0 0 rgba(212,175,55,0);border-color:var(--panel-border);}
+  50%{box-shadow:0 0 0 4px rgba(212,175,55,.35), 0 0 22px 6px rgba(212,175,55,.65);border-color:var(--gold-light);}
+}
+.btn.reveal-highlight{animation:btnPulse 1.1s ease-in-out infinite;}
+@keyframes textBlink{
+  0%,100%{opacity:1;}
+  50%{opacity:.35;}
+}
+.win-pct.pulse{animation:textBlink 1s ease-in-out infinite;}
+
+/* ============================================================
+   CONTROLS
+   ============================================================ */
+.controls{display:flex;flex-direction:column;gap:6px;align-items:center;flex:0 0 auto;}
+.chip-rack{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;}
+.chip-btn{background:none;border:none;cursor:pointer;padding:0;width:44px;height:44px;transition:transform .12s;}
+.chip-btn:hover{transform:translateY(-4px);}
+.chip-btn:active{transform:translateY(0) scale(.94);}
+.chip-btn svg{width:100%;height:100%;filter:drop-shadow(0 4px 6px rgba(0,0,0,.5));}
+.bet-row,.action-row{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;align-items:center;}
+.bet-suggestion{
+  font-size:.72rem;color:var(--gold-light);text-align:center;max-width:420px;
+  background:rgba(0,0,0,.3);border:1px solid var(--panel-border);border-radius:8px;padding:5px 10px;
+}
+.bet-suggestion.warn{color:#ffdca0;}
+.btn{
+  font-family:var(--sans);font-weight:600;font-size:.78rem;letter-spacing:.02em;
+  padding:8px 13px;border-radius:20px;border:1px solid var(--panel-border);
+  background:linear-gradient(180deg, rgba(255,255,255,.08), rgba(0,0,0,.25));
+  color:#f1ead9;cursor:pointer;transition:all .15s;min-width:70px;
+}
+.btn:hover:not(:disabled){background:rgba(212,175,55,.22);border-color:var(--gold);}
+.btn:disabled{opacity:.3;cursor:not-allowed;}
+.btn:active:not(:disabled){transform:scale(.96);}
+.btn.primary{background:linear-gradient(180deg,var(--gold-light),var(--gold));color:#1a1200;border-color:var(--gold);}
+.btn.primary:hover:not(:disabled){filter:brightness(1.08);}
+.btn.danger{border-color:rgba(255,93,93,.5);}
+.btn.ghost{background:transparent;}
+/* Fixed on the right edge, vertically centered, for the whole duration of
+   an active hand — a permanent control, not something discovered via a
+   toggle. Never part of document flow, so it never affects page height. */
+.reveal-btn{
+  position:fixed;right:12px;top:50%;transform:translateY(-50%);z-index:55;
+  max-width:104px;
+  padding:10px 12px;border-radius:22px;font-family:var(--serif);
+  font-size:.78rem;line-height:1.15;letter-spacing:.02em;text-align:center;
+  background:linear-gradient(180deg,#f3d98a,#c99a2e);
+  color:#241a00;border:1px solid var(--gold);cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.5);
+  transition:filter .15s;
+}
+.reveal-btn.hidden{display:none;}
+.reveal-btn:hover:not(:disabled){filter:brightness(1.07);}
+.reveal-btn:active:not(:disabled){filter:brightness(0.95);}
+.reveal-btn:disabled{opacity:.35;cursor:not-allowed;}
+.reveal-btn.open{filter:brightness(1.1);box-shadow:0 0 0 2px var(--gold-light);}
+@media (max-width:640px){
+  .reveal-btn{top:8px;right:8px;bottom:auto;transform:none;max-width:76px;font-size:.68rem;padding:8px 8px;}
+}
+
+.footer-bar{
+  display:flex;justify-content:center;gap:16px;font-family:var(--serif);
+  font-size:.78rem;color:var(--gold-light);flex-wrap:wrap;flex:0 0 auto;
+}
+.footer-bar b{color:#fff;}
+
+/* ============================================================
+   REVEAL BEST MOVE — side panel (fixed/overlay: never part of page flow,
+   so opening it can never cause the page itself to need scrolling)
+   ============================================================ */
+.side-panel{
+  position:fixed;top:0;left:0;height:100dvh;height:100vh;width:300px;max-width:88vw;
+  background:var(--panel-bg);border-right:1px solid var(--panel-border);
+  box-shadow:10px 0 30px rgba(0,0,0,.5);
+  transform:translateX(-105%);transition:transform .3s ease;
+  z-index:60;display:flex;flex-direction:column;padding:12px 14px;
+  overflow-y:auto;
+}
+.side-panel.open{transform:translateX(0);}
+.side-panel-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;flex:0 0 auto;}
+.side-panel-head span{font-family:var(--serif);color:var(--gold-light);font-size:1rem;}
+.panel-close{background:none;border:1px solid var(--panel-border);color:#f1ead9;border-radius:8px;width:26px;height:26px;cursor:pointer;font-size:.85rem;line-height:1;}
+.panel-close:hover{background:rgba(212,175,55,.18);}
+.ev-list{display:flex;flex-direction:column;gap:5px;margin:6px 0;}
+.ev-row{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;padding:6px 9px;border-radius:8px;background:rgba(255,255,255,.04);font-size:.8rem;font-family:var(--serif);}
+.ev-row.best{background:rgba(212,175,55,.18);border:1px solid var(--gold-dim);font-weight:700;}
+.ev-row .win-pct{font-variant-numeric:tabular-nums;color:#dfe8df;}
+.ev-row .ev-val{font-variant-numeric:tabular-nums;text-align:right;}
+.ev-val.pos{color:var(--win);}
+.ev-val.neg{color:var(--lose);}
+.bs-line{font-size:.78rem;color:#d8e0d8;margin-top:4px;}
+.bs-line b{color:var(--gold-light);}
+.deviation{margin-top:6px;font-size:.74rem;color:#ffdca0;background:rgba(255,180,60,.1);border:1px solid rgba(255,180,60,.35);border-radius:8px;padding:7px 9px;}
+.explain{margin-top:8px;font-size:.8rem;color:#eee;font-style:italic;}
+.count-note{margin-top:6px;font-size:.72rem;color:#9fb0a0;}
+.template-line{margin-top:10px;font-size:.85rem;color:var(--gold-light);font-family:var(--serif);background:rgba(0,0,0,.3);border-radius:8px;padding:7px 9px;}
+.advisor-placeholder{font-size:.8rem;color:#9fb0a0;text-align:center;padding:6px 0;}
+@media (max-width:640px){
+  .side-panel{left:0;right:0;top:0;bottom:auto;height:auto;max-height:62vh;width:auto;max-width:none;transform:translateY(-110%);border-right:none;border-bottom:1px solid var(--panel-border);}
+  .side-panel.open{transform:translateY(0);}
+}
+
+/* ============================================================
+   INSURANCE PROMPT
+   ============================================================ */
+.insurance-box{background:var(--panel-bg);border:1px solid var(--panel-border);border-radius:12px;padding:8px 12px;text-align:center;flex:0 0 auto;}
+.insurance-box p{margin:0 0 6px;font-family:var(--serif);color:var(--gold-light);font-size:.85rem;}
+
+/* ============================================================
+   MODALS
+   ============================================================ */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;z-index:50;padding:16px;}
+.hidden{display:none !important;}
+.modal-overlay.hidden{display:none;}
+.modal{background:#0c2417;border:1px solid var(--panel-border);border-radius:16px;padding:20px 22px;max-width:460px;width:100%;max-height:86vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.6);}
+.modal h2{font-family:var(--serif);color:var(--gold-light);margin-top:0;font-size:1.2rem;border-bottom:1px solid var(--panel-border);padding-bottom:8px;}
+.field-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,.06);font-size:.86rem;}
+.field-row select,.field-row input[type=number]{background:rgba(0,0,0,.3);color:#fff;border:1px solid var(--panel-border);border-radius:6px;padding:5px 8px;font-family:var(--sans);}
+.field-row input[type=checkbox]{width:18px;height:18px;accent-color:var(--gold);}
+.field-row input[type=range]{accent-color:var(--gold);}
+.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px;}
+.stats-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:.85rem;}
+.stats-grid div{background:rgba(255,255,255,.04);border-radius:8px;padding:8px 10px;}
+.stats-grid b{display:block;color:var(--gold-light);font-family:var(--serif);font-size:1.05rem;}
+.selftest{font-size:.68rem;color:#8fae90;margin-top:10px;text-align:center;}
+.selftest.fail{color:var(--lose);}
+
+/* ============================================================
+   RESPONSIVE — every rule below exists to keep the whole game on-screen
+   with zero page scrolling, from ~380px phones up through desktop, by
+   shrinking chrome/card/control sizing rather than letting content overflow.
+   ============================================================ */
+@media (max-width:640px){
+  .topbar{flex-direction:column;align-items:stretch;gap:4px;}
+  .topbar-right{flex-direction:row;flex-wrap:wrap;align-items:stretch;width:100%;}
+  .shoe-info{flex:1 1 auto;justify-content:space-between;box-sizing:border-box;}
+  .topbar-buttons{width:100%;}
+  .topbar-buttons .icon-btn{flex:1 1 0;}
+}
+@media (max-height:720px){
+  .card-slot{width:58px;height:82px;}
+  .cards .card-slot{margin-left:-22px;}
+  .betting-circle{width:90px;height:52px;}
+  .zone-label{margin-bottom:0;}
+  .hand-total{font-size:.72rem;padding:0 6px;min-height:16px;}
+}
+@media (max-height:620px){
+  .card-slot{width:48px;height:68px;}
+  .cards .card-slot{margin-left:-18px;}
+  .betting-circle{width:76px;height:42px;margin:2px auto;}
+  .bet-amount{font-size:.76rem;}
+  .felt{padding:6px 8px 4px;}
+}
+@media (max-width:480px){
+  .card-slot{width:54px;height:76px;}
+  .cards .card-slot{margin-left:-20px;}
+  .betting-circle{width:92px;height:56px;}
+  .brand{font-size:1.05rem;}
+  .reveal-btn{font-size:.78rem;padding:7px 12px;}
+  .hand-groups{gap:6px;}
+  .pen-bar{width:34px;}
+  .icon-btn{padding:6px 8px;font-size:.68rem;}
+  .chip-btn{width:38px;height:38px;}
+  .btn{min-width:0;padding:7px 9px;font-size:.72rem;}
+  .action-row{gap:5px;}
+  .footer-bar{gap:10px;font-size:.72rem;}
+}
+@media (prefers-reduced-motion: reduce){
+  *{animation-duration:.001ms !important;animation-iteration-count:1 !important;transition-duration:.001ms !important;}
+  .side-panel{transition-duration:.001ms !important;}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="topbar">
+    <div class="brand">♠ Vegas Strip Blackjack<small>6-DECK &middot; S17 &middot; DAS &middot; LATE SURRENDER</small></div>
+    <div class="topbar-right">
+      <div class="shoe-info">
+        <span id="shoeCountTxt">312 cards</span>
+        <div class="pen-bar"><i id="penFill" style="width:0%"></i><span class="cut-mark" id="cutMark" style="left:75%"></span></div>
+        <span id="penTxt">0%</span>
+      </div>
+      <button class="mini-toggle" id="countPeekBtn" title="Peek at the count for 2 seconds">👁 Count</button>
+      <span class="count-badge hidden" id="countBadge">RC 0 / TC 0.0</span>
+      <div class="topbar-buttons">
+        <button class="icon-btn" id="muteBtn" title="Mute card sounds">🔊</button>
+        <button class="icon-btn" id="statsBtn">📊 Stats</button>
+        <button class="icon-btn" id="settingsBtn">⚙ Settings</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="felt">
+    <div class="zone dealer-zone">
+      <div class="zone-label">Dealer</div>
+      <div class="cards" id="dealerCards"></div>
+      <div class="hand-total" id="dealerTotal">&nbsp;</div>
+    </div>
+
+    <div class="mid-zone">
+      <div class="result-banner" id="resultBanner">&nbsp;</div>
+    </div>
+
+    <div class="zone player-zone">
+      <div class="zone-label">Player</div>
+      <div class="hand-groups" id="handGroups"></div>
+    </div>
+
+    <div class="betting-circle" id="bettingCircle">
+      <div class="chips-in-play" id="chipsInPlay"></div>
+      <div class="bet-amount" id="betAmount">Place a bet</div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <div class="chip-rack" id="chipRack"></div>
+    <div class="bet-row" id="betRow">
+      <button class="btn ghost" id="clearBetBtn">Clear Bet</button>
+      <button class="btn primary" id="dealBtn" disabled>Deal</button>
+      <button class="btn ghost" id="rebetBtn">Rebet</button>
+      <button class="btn ghost" id="suggestBetBtn" title="Recommend a bet size from the current true count">Suggest Bet</button>
+      <label class="mini-toggle" title="Automatically re-bet the same amount and deal the next hand"><input type="checkbox" id="autoDealToggle"> 🔁 Auto Deal</label>
+    </div>
+    <div class="bet-suggestion hidden" id="betSuggestion"></div>
+    <div class="insurance-box hidden" id="insuranceBox">
+      <p>Dealer shows an Ace &mdash; Insurance? (costs half your bet, pays 2:1)</p>
+      <div class="bet-row">
+        <button class="btn primary" id="insYesBtn">Yes, Insure</button>
+        <button class="btn ghost" id="insNoBtn">No Thanks</button>
+      </div>
+    </div>
+    <div class="action-row" id="actionRow">
+      <button class="btn" data-action="hit">Hit</button>
+      <button class="btn" data-action="stand">Stand</button>
+      <button class="btn" data-action="double">Double</button>
+      <button class="btn" data-action="split">Split</button>
+      <button class="btn danger" data-action="surrender">Surrender</button>
+    </div>
+  </div>
+
+  <div class="footer-bar">
+    <div>Bankroll: <b>$<span id="bankrollTxt">0</span></b></div>
+    <div>Bet: <b>$<span id="currentBetTxt">0</span></b></div>
+  </div>
+</div>
+
+<!-- REVEAL BEST MOVE — a permanent fixed button on the right edge of the
+     screen, visible for the whole duration of an active hand (no toggle
+     needed to discover it). Every click recomputes fresh from the CURRENT
+     hand and (re)opens the side panel; the panel's own ✕ is the only close
+     control, decoupled from this button's click behavior. Also bound to
+     the "B" key. Both are fixed/overlay elements, so neither ever
+     contributes to page height / scrolling. -->
+<button class="reveal-btn hidden" id="revealBtn">🔎 Best Move</button>
+<div class="side-panel" id="sidePanel">
+  <div class="side-panel-head">
+    <span>★ Best Move</span>
+    <button class="panel-close" id="panelCloseBtn">✕</button>
+  </div>
+  <div id="advisorBody"><div class="advisor-placeholder">Deal a hand, then press Reveal Best Move for an exact composition-dependent recommendation.</div></div>
+</div>
+
+<!-- SETTINGS MODAL -->
+<div class="modal-overlay hidden" id="settingsModal">
+  <div class="modal">
+    <h2>Table Rules</h2>
+    <div class="field-row"><span>Number of decks</span>
+      <select id="optDecks"><option>1</option><option>2</option><option>4</option><option selected>6</option><option>8</option></select>
+    </div>
+    <div class="field-row"><span>Dealer hits soft 17 (H17)</span><input type="checkbox" id="optH17"></div>
+    <div class="field-row"><span>Double after split (DAS)</span><input type="checkbox" id="optDAS" checked></div>
+    <div class="field-row"><span>Late surrender allowed</span><input type="checkbox" id="optSurrender" checked></div>
+    <div class="field-row"><span>Penetration (<span id="optPenVal">75</span>%)</span>
+      <input type="range" id="optPen" min="50" max="90" value="75">
+    </div>
+    <div class="field-row"><span>Starting bankroll</span><input type="number" id="optBankroll" value="1000" min="100" step="100"></div>
+    <div class="modal-actions">
+      <button class="btn ghost" id="settingsCloseBtn">Cancel</button>
+      <button class="btn primary" id="settingsApplyBtn">Apply &amp; Reshuffle</button>
+    </div>
+    <div class="selftest" id="selftest">Verifying strategy engine…</div>
+  </div>
+</div>
+
+<!-- STATS MODAL -->
+<div class="modal-overlay hidden" id="statsModal">
+  <div class="modal">
+    <h2>Session Stats</h2>
+    <div class="stats-grid" id="statsGrid"></div>
+    <div class="modal-actions">
+      <button class="btn ghost" id="statsResetBtn">Reset Stats</button>
+      <button class="btn primary" id="statsCloseBtn">Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+/* ==========================================================================================
+   VEGAS STRIP BLACKJACK — single-file implementation
+   Modules: Rand -> Cards -> Shoe -> Hand -> Dealer -> EV (exact composition-dependent engine)
+            -> Strategy (basic-strategy reference table) -> Game -> Render -> UI
+   ========================================================================================== */
+
+/* ---------------------------------------------------------------------------
+   RAND — cryptographically strong uniform integers, used for shuffling
+   --------------------------------------------------------------------------- */
+const Rand = {
+  // Uniform integer in [0, maxExclusive) using rejection sampling to avoid modulo bias.
+  int(maxExclusive){
+    if (maxExclusive <= 0) return 0;
+    const range = maxExclusive;
+    const bitsNeeded = Math.ceil(Math.log2(range));
+    const bytesNeeded = Math.max(1, Math.ceil(bitsNeeded / 8));
+    const maxUint = Math.pow(256, bytesNeeded);
+    const limit = maxUint - (maxUint % range);
+    const buf = new Uint8Array(bytesNeeded);
+    let val;
+    do {
+      crypto.getRandomValues(buf);
+      val = 0;
+      for (let i = 0; i < bytesNeeded; i++) val = val * 256 + buf[i];
+    } while (val >= limit);
+    return val % range;
+  }
+};
+
+/* ---------------------------------------------------------------------------
+   CARDS — rank/suit/value-group model
+   Group index 0..9 => Ace, 2,3,4,5,6,7,8,9, Ten-value(10/J/Q/K)
+   --------------------------------------------------------------------------- */
+const RANKS = ['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
+const SUITS = ['S','H','D','C'];
+const SUIT_COLOR = {S:'#1a1a1a', C:'#1a1a1a', H:'#a91d2e', D:'#a91d2e'};
+
+function rankToGroup(rank){
+  if (rank === 'A') return 0;
+  if (rank === '10' || rank === 'J' || rank === 'Q' || rank === 'K') return 9;
+  return Number(rank) - 1; // '2'->1 ... '9'->8
+}
+function groupBaseValue(group){ // value used in totals before ace-as-11 handling
+  if (group === 0) return 11;
+  if (group <= 8) return group + 1;
+  return 10;
+}
+function freshComposition(deckCount){
+  // 10 slots: [Ace,2,3,4,5,6,7,8,9,Ten-group]
+  const c = new Array(10).fill(4 * deckCount);
+  c[9] = 16 * deckCount;
+  return c;
+}
+
+/* ---------------------------------------------------------------------------
+   SHOE — multi-deck shoe with Fisher-Yates shuffle + cut-card penetration
+   --------------------------------------------------------------------------- */
+class Shoe{
+  constructor(rules){
+    this.rules = rules;
+    this.cards = [];
+    this.counts = freshComposition(rules.decks);
+    this.cutIndex = 0;
+    this.drawnSinceShuffle = 0;
+    this.needsShuffle = true;
+    this.build();
+  }
+  build(){
+    this.cards = [];
+    for (let d = 0; d < this.rules.decks; d++){
+      for (const rank of RANKS){
+        for (const suit of SUITS){
+          this.cards.push({rank, suit, group: rankToGroup(rank)});
+        }
+      }
+    }
+  }
+  shuffle(){
+    this.build();
+    // Fisher-Yates using crypto-secure indices
+    for (let i = this.cards.length - 1; i > 0; i--){
+      const j = Rand.int(i + 1);
+      const tmp = this.cards[i]; this.cards[i] = this.cards[j]; this.cards[j] = tmp;
+    }
+    this.counts = freshComposition(this.rules.decks);
+    this.drawnSinceShuffle = 0;
+    this.cutIndex = Math.floor(this.cards.length * (this.rules.penetration / 100));
+    this.needsShuffle = false;
+  }
+  draw(){
+    const card = this.cards.pop();
+    this.counts[card.group]--;
+    this.drawnSinceShuffle++;
+    if (this.drawnSinceShuffle >= this.cutIndex) this.needsShuffle = true;
+    return card;
+  }
+  remainingCount(){ return this.cards.length; }
+  totalCount(){ return this.rules.decks * 52; }
+  penetrationPct(){ return Math.round((this.drawnSinceShuffle / this.totalCount()) * 100); }
+}
+
+/* ---------------------------------------------------------------------------
+   HAND — total/soft calculation shared by player & dealer
+   --------------------------------------------------------------------------- */
+const HandUtil = {
+  // returns {total, softAces} where softAces = number of aces currently counted as 11
+  compute(cards){
+    let total = 0, softAces = 0;
+    for (const c of cards){
+      if (c.group === 0){ total += 11; softAces++; }
+      else total += groupBaseValue(c.group);
+      while (total > 21 && softAces > 0){ total -= 10; softAces--; }
+    }
+    return {total, softAces};
+  },
+  isSoft(cards){ return this.compute(cards).softAces > 0; },
+  isBust(cards){ return this.compute(cards).total > 21; },
+  isBlackjack(cards){ return cards.length === 2 && this.compute(cards).total === 21; },
+  display(cards){
+    const {total, softAces} = this.compute(cards);
+    if (softAces > 0 && total !== 21) return `${total-10}/${total}`;
+    return `${total}`;
+  },
+  isPairEligible(cards){
+    return cards.length === 2 && cards[0].group === cards[1].group;
+  }
+};
+
+/* ---------------------------------------------------------------------------
+   EV ENGINE — exact composition-dependent expected value
+   ---------------------------------------------------------------------------
+   All functions here operate purely on numeric "composition" arrays (10 slots,
+   counts of unseen cards by value-group) plus totals/soft-ace counts. They
+   have no knowledge of the DOM, the live shoe object, or specific suits —
+   this keeps them pure, testable, and reusable both for (a) the LIVE advisor,
+   which feeds in the actual depleted shoe composition, and (b) the reference
+   "basic strategy" table, which feeds in a synthetic fresh-shoe composition.
+
+   The dealer's outcome distribution is computed EXACTLY (not simulated) by
+   recursively enumerating every card the dealer could draw, weighting each
+   branch by its exact hypergeometric probability from the given composition,
+   and memoizing on (total, softAces, composition, rule-flags) so repeated
+   sub-states across branches are only solved once.
+
+   PEEK CONDITIONING: American/Vegas rules have the dealer peek for blackjack
+   before the player acts whenever the up-card is an Ace or a Ten. By the time
+   the player is making a Hit/Stand/Double/Split decision, a dealer blackjack
+   has therefore already been ruled out. We model this by first computing the
+   raw (unconditioned) distribution including the blackjack branch, then
+   removing that branch and rescaling the remainder by 1/(1-P(blackjack)) —
+   mathematically identical to conditioning on "no dealer blackjack".
+   ========================================================================= */
+const EV = (function(){
+
+  function cloneComp(c){ return c.slice(); }
+  function compKey(c){ return c.join(','); }
+
+  function drawStep(total, softAces, group){
+    const val = groupBaseValue(group);
+    let nt = total + val;
+    let ns = softAces + (group === 0 ? 1 : 0);
+    while (nt > 21 && ns > 0){ nt -= 10; ns -= 1; }
+    return [nt, ns];
+  }
+
+  // ---- Dealer: distribution of final outcome once dealer MUST play out from
+  // (total, softAces) under the given composition. Returns a plain object
+  // mapping outcome -> probability. Outcomes are 17,18,19,20,21 or 'bust'.
+  function makeDealerFinish(){
+    const memo = new Map();
+    function finish(total, softAces, comp, s17){
+      if (total > 21) return {bust: 1};
+      const mustHit = total < 17 || (total === 17 && softAces > 0 && !s17);
+      if (!mustHit) { const o = {}; o[total] = 1; return o; }
+      const key = total + '|' + softAces + '|' + (s17?1:0) + '|' + compKey(comp);
+      const cached = memo.get(key);
+      if (cached) return cached;
+      const remaining = comp.reduce((a,b)=>a+b, 0);
+      const dist = {};
+      for (let g = 0; g < 10; g++){
+        const c = comp[g];
+        if (!c) continue;
+        const p = c / remaining;
+        const [nt, ns] = drawStep(total, softAces, g);
+        comp[g]--;
+        const sub = finish(nt, ns, comp, s17);
+        comp[g]++;
+        for (const k in sub) dist[k] = (dist[k] || 0) + p * sub[k];
+      }
+      memo.set(key, dist);
+      return dist;
+    }
+    return finish;
+  }
+  const dealerFinish = makeDealerFinish();
+
+  // ---- Dealer: full distribution starting from a two-card hand (up-card +
+  // unseen hole card), applying peek-conditioning for up = Ace or Ten.
+  // Returns {dist, bjProb}.
+  function dealerFullDistribution(upGroup, comp, s17){
+    const upVal = groupBaseValue(upGroup);
+    const remaining = comp.reduce((a,b)=>a+b, 0);
+    const dist = {};
+    let bjProb = 0;
+    for (let g = 0; g < 10; g++){
+      const c = comp[g];
+      if (!c) continue;
+      const p = c / remaining;
+      let nt = upVal + groupBaseValue(g);
+      let ns = (upGroup === 0 ? 1 : 0) + (g === 0 ? 1 : 0);
+      while (nt > 21 && ns > 0){ nt -= 10; ns -= 1; }
+      const isBJ = nt === 21 && ((upGroup === 0 && g === 9) || (upGroup === 9 && g === 0));
+      if (isBJ){ bjProb += p; continue; }
+      comp[g]--;
+      const sub = dealerFinish(nt, ns, comp, s17);
+      comp[g]++;
+      for (const k in sub) dist[k] = (dist[k] || 0) + p * sub[k];
+    }
+    if ((upGroup === 0 || upGroup === 9) && bjProb > 0 && bjProb < 1){
+      const scale = 1 / (1 - bjProb);
+      for (const k in dist) dist[k] *= scale;
+    }
+    return {dist, bjProb};
+  }
+
+  // ---- Stand EV: player locks in `total`; compare to dealer's distribution.
+  function standEV(total, upGroup, comp, s17){
+    const {dist} = dealerFullDistribution(upGroup, comp, s17);
+    let ev = 0;
+    for (const k in dist){
+      const p = dist[k];
+      if (k === 'bust') ev += p;
+      else { const d = Number(k); if (d > total) ev -= p; else if (d < total) ev += p; }
+    }
+    return ev;
+  }
+
+  // ---- Hit EV: draw one card now, then play optimally afterwards (best of
+  // hit/stand recursively — no further doubling once you've hit).
+  function makeBestEV(){
+    const memo = new Map();
+    function bestEV(total, softAces, upGroup, comp, s17){
+      if (total > 21) return -1;
+      const key = total+'|'+softAces+'|'+upGroup+'|'+(s17?1:0)+'|'+compKey(comp);
+      const cached = memo.get(key);
+      if (cached !== undefined) return cached;
+      let best = standEV(total, upGroup, comp, s17);
+      const remaining = comp.reduce((a,b)=>a+b, 0);
+      if (remaining > 0){
+        let hEv = 0;
+        for (let g = 0; g < 10; g++){
+          const c = comp[g];
+          if (!c) continue;
+          const p = c / remaining;
+          const [nt, ns] = drawStep(total, softAces, g);
+          let sub;
+          if (nt > 21) sub = -1;
+          else { comp[g]--; sub = bestEV(nt, ns, upGroup, comp, s17); comp[g]++; }
+          hEv += p * sub;
+        }
+        if (hEv > best) best = hEv;
+      }
+      memo.set(key, best);
+      return best;
+    }
+    return bestEV;
+  }
+  const bestEV = makeBestEV();
+
+  function hitEV(total, softAces, upGroup, comp, s17){
+    const remaining = comp.reduce((a,b)=>a+b, 0);
+    if (remaining === 0) return -1;
+    let hEv = 0;
+    for (let g = 0; g < 10; g++){
+      const c = comp[g];
+      if (!c) continue;
+      const p = c / remaining;
+      const [nt, ns] = drawStep(total, softAces, g);
+      let sub;
+      if (nt > 21) sub = -1;
+      else { comp[g]--; sub = bestEV(nt, ns, upGroup, comp, s17); comp[g]++; }
+      hEv += p * sub;
+    }
+    return hEv;
+  }
+
+  // ---- Double EV: exactly one more card, forced stand, bet doubled.
+  function doubleEV(total, softAces, upGroup, comp, s17){
+    const remaining = comp.reduce((a,b)=>a+b, 0);
+    if (remaining === 0) return -2;
+    let ev = 0;
+    for (let g = 0; g < 10; g++){
+      const c = comp[g];
+      if (!c) continue;
+      const p = c / remaining;
+      const [nt, ns] = drawStep(total, softAces, g);
+      if (nt > 21) ev += p * -2;
+      else { comp[g]--; ev += p * 2 * standEV(nt, upGroup, comp, s17); comp[g]++; }
+    }
+    return ev;
+  }
+
+  // ---- Split EV (documented approximation).
+  // Exact joint EV for two simultaneously-played hands sharing one depleting
+  // shoe would require a state space of (hand1 x hand2 x shoe) which is
+  // combinatorially explosive. Instead — as essentially all practical
+  // composition-dependent blackjack tools do — we evaluate each resulting
+  // hand independently against the SAME post-removal shoe composition
+  // (ignoring the small correlation between the two hands' card removal).
+  // The bias from this simplification is on the order of 0.001-0.005 units
+  // and does not change the recommended action in practice.
+  // Aces: exactly one card, no further action, no blackjack bonus on 21.
+  function splitEV(pairGroup, upGroup, comp, s17, das){
+    const remaining = comp.reduce((a,b)=>a+b, 0);
+    if (remaining === 0) return -2;
+    let sum = 0;
+    const baseVal = groupBaseValue(pairGroup);
+    for (let g = 0; g < 10; g++){
+      const c = comp[g];
+      if (!c) continue;
+      const p = c / remaining;
+      let outcome;
+      if (pairGroup === 0){
+        // split aces: one card, forced stand, no hit, no double
+        let nt = 11 + groupBaseValue(g);
+        let ns = 1 + (g === 0 ? 1 : 0);
+        while (nt > 21 && ns > 0){ nt -= 10; ns -= 1; }
+        if (nt > 21) outcome = -1;
+        else { comp[g]--; outcome = standEV(nt, upGroup, comp, s17); comp[g]++; }
+      } else {
+        let nt = baseVal + groupBaseValue(g);
+        let ns = (g === 0 ? 1 : 0);
+        while (nt > 21 && ns > 0){ nt -= 10; ns -= 1; }
+        if (nt > 21) outcome = -1;
+        else {
+          comp[g]--;
+          const s = bestEV(nt, ns, upGroup, comp, s17);
+          const d = das ? doubleEV(nt, ns, upGroup, comp, s17) : -Infinity;
+          outcome = Math.max(s, d);
+          comp[g]++;
+        }
+      }
+      sum += p * outcome;
+    }
+    return 2 * sum;
+  }
+
+  /* -------------------------------------------------------------------------
+     WIN / PUSH / LOSE PROBABILITY ENGINE
+     ---------------------------------------------------------------------
+     This is NOT a second, independent model of the game — it is a
+     probability-flavored walk of the exact same optimal-decision recursion
+     used by standEV/hitEV/bestEV/doubleEV/splitEV above, over the same
+     real (depleted) shoe composition. Wherever a choice must be made
+     between hitting and standing partway through a "Hit" or "Split", the
+     branch actually taken is decided by comparing standEV vs hitEV (the
+     same comparison bestEV uses), so the win% shown to the player is always
+     consistent with — never in competition with — the EV numbers.  Its only
+     job is to translate "EV in bet units" into the more intuitive "chance
+     of winning the hand", for display purposes.
+     ------------------------------------------------------------------- */
+  function outcomeFromDist(dist, total){
+    let win = 0, push = 0, lose = 0;
+    for (const k in dist){
+      const p = dist[k];
+      if (k === 'bust') win += p;
+      else { const d = Number(k); if (d > total) lose += p; else if (d < total) win += p; else push += p; }
+    }
+    return {win, push, lose};
+  }
+  function standOutcome(total, upGroup, comp, s17){
+    const {dist} = dealerFullDistribution(upGroup, comp, s17);
+    return outcomeFromDist(dist, total);
+  }
+  function makeBestOutcome(){
+    const memo = new Map();
+    // Mirrors bestEV's recursion exactly: at each node, hit only if hitEV
+    // strictly beats standEV (identical tie-break — ties go to stand).
+    function bestOutcome(total, softAces, upGroup, comp, s17){
+      if (total > 21) return {win:0, push:0, lose:1};
+      const key = total+'|'+softAces+'|'+upGroup+'|'+(s17?1:0)+'|'+compKey(comp);
+      const cached = memo.get(key);
+      if (cached) return cached;
+      const remaining = comp.reduce((a,b)=>a+b, 0);
+      const sEv = standEV(total, upGroup, comp, s17);
+      const hEv = remaining > 0 ? hitEV(total, softAces, upGroup, comp, s17) : -Infinity;
+      let result;
+      if (hEv > sEv){
+        let win=0, push=0, lose=0;
+        for (let g = 0; g < 10; g++){
+          const c = comp[g];
+          if (!c) continue;
+          const p = c / remaining;
+          const [nt, ns] = drawStep(total, softAces, g);
+          if (nt > 21){ lose += p; continue; }
+          comp[g]--; const sub = bestOutcome(nt, ns, upGroup, comp, s17); comp[g]++;
+          win += p*sub.win; push += p*sub.push; lose += p*sub.lose;
+        }
+        result = {win, push, lose};
+      } else {
+        result = standOutcome(total, upGroup, comp, s17);
+      }
+      memo.set(key, result);
+      return result;
+    }
+    return bestOutcome;
+  }
+  const bestOutcome = makeBestOutcome();
+
+  function hitOutcome(total, softAces, upGroup, comp, s17){
+    const remaining = comp.reduce((a,b)=>a+b, 0);
+    if (remaining === 0) return {win:0, push:0, lose:1};
+    let win=0, push=0, lose=0;
+    for (let g = 0; g < 10; g++){
+      const c = comp[g];
+      if (!c) continue;
+      const p = c / remaining;
+      const [nt, ns] = drawStep(total, softAces, g);
+      if (nt > 21){ lose += p; continue; }
+      comp[g]--; const sub = bestOutcome(nt, ns, upGroup, comp, s17); comp[g]++;
+      win += p*sub.win; push += p*sub.push; lose += p*sub.lose;
+    }
+    return {win, push, lose};
+  }
+
+  function doubleOutcome(total, softAces, upGroup, comp, s17){
+    const remaining = comp.reduce((a,b)=>a+b, 0);
+    if (remaining === 0) return {win:0, push:0, lose:1};
+    let win=0, push=0, lose=0;
+    for (let g = 0; g < 10; g++){
+      const c = comp[g];
+      if (!c) continue;
+      const p = c / remaining;
+      const [nt, ns] = drawStep(total, softAces, g);
+      if (nt > 21){ lose += p; continue; }
+      comp[g]--; const sub = standOutcome(nt, upGroup, comp, s17); comp[g]++;
+      win += p*sub.win; push += p*sub.push; lose += p*sub.lose;
+    }
+    return {win, push, lose};
+  }
+
+  function splitOutcome(pairGroup, upGroup, comp, s17, das){
+    // Same independent-hand approximation as splitEV (see note there):
+    // the reported win% is the average per-hand win probability.
+    const remaining = comp.reduce((a,b)=>a+b, 0);
+    if (remaining === 0) return {win:0, push:0, lose:1};
+    let win=0, push=0, lose=0;
+    const baseVal = groupBaseValue(pairGroup);
+    for (let g = 0; g < 10; g++){
+      const c = comp[g];
+      if (!c) continue;
+      const p = c / remaining;
+      let outcome;
+      if (pairGroup === 0){
+        let nt = 11 + groupBaseValue(g);
+        let ns = 1 + (g === 0 ? 1 : 0);
+        while (nt > 21 && ns > 0){ nt -= 10; ns -= 1; }
+        if (nt > 21) outcome = {win:0, push:0, lose:1};
+        else { comp[g]--; outcome = standOutcome(nt, upGroup, comp, s17); comp[g]++; }
+      } else {
+        let nt = baseVal + groupBaseValue(g);
+        let ns = (g === 0 ? 1 : 0);
+        while (nt > 21 && ns > 0){ nt -= 10; ns -= 1; }
+        if (nt > 21) outcome = {win:0, push:0, lose:1};
+        else {
+          comp[g]--;
+          // same double-vs-stand decision splitEV makes, kept in sync
+          const sEv = bestEV(nt, ns, upGroup, comp, s17);
+          const dEv = das ? doubleEV(nt, ns, upGroup, comp, s17) : -Infinity;
+          outcome = (das && dEv > sEv) ? doubleOutcome(nt, ns, upGroup, comp, s17) : bestOutcome(nt, ns, upGroup, comp, s17);
+          comp[g]++;
+        }
+      }
+      win += p*outcome.win; push += p*outcome.push; lose += p*outcome.lose;
+    }
+    return {win, push, lose};
+  }
+
+  return {
+    dealerFullDistribution, standEV, hitEV, bestEV, doubleEV, splitEV,
+    standOutcome, hitOutcome, doubleOutcome, splitOutcome,
+    cloneComp
+  };
+})();
+
+/* ---------------------------------------------------------------------------
+   STRATEGY — reference "book" basic-strategy table, generated dynamically
+   from the SAME EV engine but fed a synthetic fresh (undepleted) shoe of the
+   configured deck count, and with hard-total cells averaged over every valid
+   two-card composition that produces that total (which is what makes a
+   "basic strategy" table composition-INDEPENDENT, unlike the live advisor).
+   Soft totals and pairs have only one natural two-card composition each, so
+   no averaging is needed there.
+   --------------------------------------------------------------------------- */
+const Strategy = {
+  table: null, // {hard:{}, soft:{}, pair:{}} keyed "total|up" / "extra|up" / "group|up"
+  rulesKey: null,
+
+  build(rules){
+    // Deck count / S17-H17 / DAS / surrender-availability change the optimal
+    // table; penetration and bankroll don't, so they're excluded from the
+    // cache key to avoid needless recomputation.
+    const key = rules.decks + '|' + rules.h17 + '|' + rules.das + '|' + rules.surrender;
+    if (this.rulesKey === key && this.table) return this.table;
+    const s17 = !rules.h17;
+    const das = rules.das;
+    const fresh = () => freshComposition(rules.decks);
+    const hard = {}, soft = {}, pair = {};
+
+    for (let up = 0; up < 10; up++){
+      const compUp = fresh(); compUp[up]--;
+
+      // HARD TOTALS 8..20 (weighted average over all (v1,v2) compositions)
+      for (let total = 8; total <= 20; total++){
+        let sS=0, sH=0, sD=0, wTot=0;
+        for (let v1 = 2; v1 <= 10; v1++){
+          const v2 = total - v1;
+          if (v2 < 2 || v2 > 10) continue;
+          const g1 = v1 === 10 ? 9 : v1 - 1;
+          const g2 = v2 === 10 ? 9 : v2 - 1;
+          let w;
+          if (g1 === g2) w = compUp[g1] * (compUp[g1]-1);
+          else w = compUp[g1] * compUp[g2] * 2;
+          if (w <= 0) continue;
+          const c = compUp.slice(); c[g1]--; c[g2]--;
+          sS += w*EV.standEV(total, up, c, s17);
+          sH += w*EV.hitEV(total, 0, up, c, s17);
+          sD += w*EV.doubleEV(total, 0, up, c, s17);
+          wTot += w;
+        }
+        if (wTot === 0) continue;
+        const evs = {S:sS/wTot, H:sH/wTot, D:sD/wTot};
+        if (rules.surrender) evs.R = -0.5;
+        hard[total+'|'+up] = argmax(evs);
+      }
+
+      // SOFT TOTALS (A,2)..(A,9) -> single natural composition
+      for (let x = 2; x <= 9; x++){
+        const gx = x - 1;
+        const c = compUp.slice(); c[0]--; c[gx]--;
+        if (c[0] < 0 || c[gx] < 0) continue;
+        const total = 11 + x;
+        const evs = {
+          S: EV.standEV(total, up, c, s17),
+          H: EV.hitEV(total, 1, up, c, s17),
+          D: EV.doubleEV(total, 1, up, c, s17)
+        };
+        soft[x+'|'+up] = argmax(evs);
+      }
+
+      // PAIRS
+      for (let g = 0; g < 10; g++){
+        const c = compUp.slice(); c[g] -= 2;
+        if (c[g] < 0) continue;
+        let total, softAces;
+        if (g === 0){ total = 12; softAces = 1; }
+        else { total = groupBaseValue(g)*2; softAces = 0; }
+        const evs = {
+          S: EV.standEV(total, up, c, s17),
+          H: EV.hitEV(total, softAces, up, c, s17),
+          D: EV.doubleEV(total, softAces, up, c, s17),
+          P: EV.splitEV(g, up, c, s17, das)
+        };
+        pair[g+'|'+up] = argmax(evs);
+      }
+    }
+    function argmax(evs){
+      let bestK = null, bestV = -Infinity;
+      for (const k in evs){ if (evs[k] > bestV){ bestV = evs[k]; bestK = k; } }
+      return bestK;
+    }
+    this.table = {hard, soft, pair};
+    this.rulesKey = key;
+    return this.table;
+  },
+
+  // Look up the book answer for a given player hand shape.
+  lookup(rules, category, key, upGroup){
+    const t = this.build(rules);
+    if (category === 'hard') return t.hard[key+'|'+upGroup];
+    if (category === 'soft') return t.soft[key+'|'+upGroup];
+    if (category === 'pair') return t.pair[key+'|'+upGroup];
+    return null;
+  }
+};
+
+const ACTION_LABEL = {S:'Stand', H:'Hit', D:'Double', P:'Split', R:'Surrender'};
+const ACTION_TO_DATA = {S:'stand', H:'hit', D:'double', P:'split', R:'surrender'};
+
+/* ---------------------------------------------------------------------------
+   RULES / GAME STATE
+   --------------------------------------------------------------------------- */
+const Rules = {
+  decks: 6, h17: false, das: true, surrender: true, penetration: 75, startBankroll: 1000
+};
+
+const CHIP_VALUES = [5, 25, 100, 500];
+const CHIP_COLORS = {5:'#a91d2e', 25:'#1a6b3a', 100:'#141414', 500:'#5b2a86'};
+const TABLE_MIN_BET = CHIP_VALUES[0];
+
+/* ---------------------------------------------------------------------------
+   BET-SPREAD MODEL — a SIMPLIFIED advantage-play model for entertainment/
+   educational purposes only. It does not guarantee profit: real results are
+   dominated by variance, this is a very short/idealized shoe compared to a
+   real bankroll-management horizon, and consistently spreading bets this
+   way is exactly what casino surveillance watches for. It exists here only
+   to demonstrate the standard count-based betting concept.
+
+   Player edge is approximated with the common rule of thumb:
+     edge% ≈ (true count - 1) * 0.5
+   (roughly: each true-count point above 1 is worth about half a percent).
+   The recommended bet, in units of TABLE_MIN_BET, ramps up with true count
+   using the control points below (highest matching threshold wins), capped
+   at BET_SPREAD_MAX_UNITS regardless of how high the count climbs. All of
+   this is intentionally exposed as tunable constants.
+   --------------------------------------------------------------------------- */
+const BET_SPREAD_NO_EDGE_TC = 1;     // at/below this true count, no edge -> flat/minimum bet
+const BET_SPREAD_MAX_UNITS = 12;     // hard cap on the spread regardless of count
+const BET_SPREAD_RAMP = [            // [true-count threshold, bet size in units], highest match wins
+  {tc: 5, units: 10},
+  {tc: 4, units: 7},
+  {tc: 3, units: 4},
+  {tc: 2, units: 2},
+  {tc: -Infinity, units: 1}
+];
+function edgePctFromTrueCount(tc){
+  return Math.max(0, (tc - BET_SPREAD_NO_EDGE_TC) * 0.5);
+}
+function recommendedBetUnits(tc){
+  if (tc <= BET_SPREAD_NO_EDGE_TC) return 1;
+  for (const step of BET_SPREAD_RAMP){
+    if (tc >= step.tc) return Math.min(BET_SPREAD_MAX_UNITS, step.units);
+  }
+  return 1;
+}
+
+const Stats = {
+  hands: 0, wins: 0, losses: 0, pushes: 0, blackjacks: 0, netUnits: 0, wagered: 0,
+  reset(){ this.hands=0;this.wins=0;this.losses=0;this.pushes=0;this.blackjacks=0;this.netUnits=0;this.wagered=0; }
+};
+
+/* ---------------------------------------------------------------------------
+   COUNT TRACKING — deliberately kept separate from shoe-depletion tracking.
+   ---------------------------------------------------------------------------
+   There are two intentionally different views of "what's been dealt":
+     1. Game.shoe.counts / Game.unseenComposition() — the TRUE remaining
+        composition, used by the EV engine. This correctly includes cards
+        the player can't see yet (like an undealt dealer hole card) because
+        they still physically affect what the dealer can draw next.
+     2. CountState.running (via CountEngine.reveal) — the Hi-Lo running
+        count, a PLAYER-PERSPECTIVE approximation. It must only include
+        cards the player has actually SEEN, so it excludes a face-down hole
+        card until the moment it's flipped.
+   dealCardTo() always draws from the shoe (updating view #1 immediately,
+   since a card is physically removed from the shoe the instant it's dealt,
+   seen or not) but only feeds CountEngine.reveal() — updating view #2 — for
+   cards dealt face up. Face-down cards are handed to CountEngine.reveal()
+   later, exactly when Render.revealHoleCard() flips them.
+   --------------------------------------------------------------------------- */
+const CountState = { running: 0 };
+// Hi-Lo tag values, exactly as specified:
+//   2,3,4,5,6        -> +1   (groups 1-5)
+//   7,8,9             ->  0   (groups 6-8)
+//   10,J,Q,K,A        -> -1   (group 9, and group 0 for Ace)
+function hiLoValue(group){
+  if (group >= 1 && group <= 5) return 1;   // 2-6
+  if (group >= 6 && group <= 8) return 0;   // 7-9
+  return -1;                                 // Ace, Ten-group
+}
+const CountEngine = {
+  // The ONLY place CountState.running is mutated. Call this exactly once
+  // per card, at the moment that specific card becomes visible to the
+  // player — never at the moment it's merely drawn from the shoe.
+  reveal(card){
+    CountState.running += hiLoValue(card.group);
+  }
+};
+// Decks remaining, estimated from cards left in the shoe and rounded to the
+// nearest 0.5 deck, with a floor of 0.5 so true count never divides by zero
+// (or by an unrealistically small remainder near the cut card).
+// Example: 308 cards left -> 308/52 = 5.923 decks -> rounds to 6.0.
+// Example: 286 cards left -> 286/52 = 5.500 decks -> rounds to 5.5.
+function decksRemainingRounded(cardsLeft){
+  const raw = cardsLeft / 52;
+  const rounded = Math.round(raw * 2) / 2;
+  return Math.max(0.5, rounded);
+}
+function trueCount(runningCount, cardsLeft){
+  return runningCount / decksRemainingRounded(cardsLeft);
+}
+
+const Game = {
+  shoe: null,
+  bankroll: Rules.startBankroll,
+  pendingBet: 0,
+  betChips: [],         // denominations currently visible in the betting circle
+  lastBetChips: [],
+  hands: [],           // array of hand objects for the current round
+  activeHandIndex: -1,
+  dealerCards: [],
+  dealerHoleRevealed: false,
+  phase: 'betting',     // betting | insurance | player-turn | dealer-turn | settled
+  insuranceBet: 0,
+  lastBet: 0,
+  handIdSeq: 0,
+
+  init(){
+    this.shoe = new Shoe(Rules);
+    this.shoe.shuffle();
+    this.bankroll = Rules.startBankroll;
+  },
+
+  reshuffleIfNeeded(){
+    if (this.shoe.needsShuffle) this.shoe.shuffle();
+  },
+
+  // composition of cards unknown to the player right now: undealt shoe cards
+  // PLUS the dealer's hole card if it exists and hasn't been revealed yet.
+  unseenComposition(){
+    const c = this.shoe.counts.slice();
+    if (this.dealerCards.length === 2 && !this.dealerHoleRevealed){
+      c[this.dealerCards[1].group]++;
+    }
+    return c;
+  },
+
+  newHand(cards, bet){
+    return {
+      id: ++this.handIdSeq, cards, bet,
+      status: 'active',      // active | stood | bust | doubled | surrendered | blackjack
+      isSplitAces: false,
+      fromSplit: false,
+      result: null
+    };
+  }
+};
+
+/* ---------------------------------------------------------------------------
+   The rest of this file wires the engine above to the DOM: rendering (SVG
+   cards & chips, animations), a small state machine driving betting -> deal
+   -> insurance/peek -> player turns -> dealer turn -> settlement, the
+   settings/stats modals, and the Best-Move advisor UI.
+   ========================================================================= */
+
+/* ---------- SVG rendering helpers ---------- */
+function suitPath(suit, cx, cy, s, color){
+  // s = scale factor; shapes built from primitives for compactness
+  if (suit === 'D'){
+    return `<polygon points="${cx},${cy-7*s} ${cx+5*s},${cy} ${cx},${cy+7*s} ${cx-5*s},${cy}" fill="${color}"/>`;
+  }
+  if (suit === 'H'){
+    return `<path d="M${cx} ${cy+6*s} C ${cx-9*s} ${cy-2*s}, ${cx-7*s} ${cy-9*s}, ${cx} ${cy-4*s} C ${cx+7*s} ${cy-9*s}, ${cx+9*s} ${cy-2*s}, ${cx} ${cy+6*s} Z" fill="${color}"/>`;
+  }
+  if (suit === 'S'){
+    return `<path d="M${cx} ${cy-7*s} C ${cx+9*s} ${cy-1*s}, ${cx+7*s} ${cy+6*s}, ${cx} ${cy+2*s} C ${cx-7*s} ${cy+6*s}, ${cx-9*s} ${cy-1*s}, ${cx} ${cy-7*s} Z M${cx} ${cy+1*s} L${cx-2.5*s} ${cy+9*s} L${cx+2.5*s} ${cy+9*s} Z" fill="${color}"/>`;
+  }
+  // club
+  return `<g fill="${color}">
+    <circle cx="${cx}" cy="${cy-5*s}" r="${3.6*s}"/>
+    <circle cx="${cx-4.2*s}" cy="${cy+1.5*s}" r="${3.6*s}"/>
+    <circle cx="${cx+4.2*s}" cy="${cy+1.5*s}" r="${3.6*s}"/>
+    <polygon points="${cx-1.6*s},${cy+2*s} ${cx+1.6*s},${cy+2*s} ${cx+2.6*s},${cy+9*s} ${cx-2.6*s},${cy+9*s}" />
+  </g>`;
+}
+
+const PIP_LAYOUTS = (function(){
+  const L = 30, C = 50, R = 70;
+  const rowY = [24, 44.5, 65, 85.5, 106];
+  function mk(list){ return list.map(([x,row,rot]) => ({x, y:rowY[row], rot: !!rot})); }
+  return {
+    2:  mk([[C,0],[C,4,1]]),
+    3:  mk([[C,0],[C,2],[C,4,1]]),
+    4:  mk([[L,0],[R,0],[L,4,1],[R,4,1]]),
+    5:  mk([[L,0],[R,0],[C,2],[L,4,1],[R,4,1]]),
+    6:  mk([[L,0],[R,0],[L,2],[R,2],[L,4,1],[R,4,1]]),
+    7:  mk([[L,0],[R,0],[C,1],[L,2],[R,2],[L,4,1],[R,4,1]]),
+    8:  mk([[L,0],[R,0],[C,1],[L,2],[R,2],[C,3,1],[L,4,1],[R,4,1]]),
+    9:  mk([[L,0],[R,0],[L,1],[R,1],[C,2],[L,3,1],[R,3,1],[L,4,1],[R,4,1]]),
+    10: [] // filled in below: needs fractional rows not expressible via mk()
+  };
+})();
+// rank 10: two columns of four (rows 0,1,3,4) plus two near-center pips
+(function fixTenRows(){
+  const rowY = [24, 44.5, 65, 85.5, 106];
+  const list = [[30,0],[70,0],[30,1],[70,1],[50,1.5],[50,2.5,1],[30,3,1],[70,3,1],[30,4,1],[70,4,1]];
+  PIP_LAYOUTS[10] = list.map(([x,row,rot])=>{
+    const y = row%1===0 ? rowY[row] : (rowY[Math.floor(row)] + rowY[Math.ceil(row)])/2;
+    return {x, y, rot: !!rot};
+  });
+})();
+
+function cardFaceSVG(rank, suit){
+  const color = SUIT_COLOR[suit];
+  const isFace = ['J','Q','K'].includes(rank);
+  const isNum = !isFace && rank !== 'A';
+  let center = '';
+  if (rank === 'A'){
+    center = suitPath(suit, 50, 65, 2.6, color);
+  } else if (isNum){
+    const pips = PIP_LAYOUTS[Number(rank)] || [];
+    center = pips.map(p => `<g transform="rotate(${p.rot?180:0} ${p.x} ${p.y})">${suitPath(suit, p.x, p.y, 1, color)}</g>`).join('');
+  } else {
+    // face card: engraved-style monogram medallion
+    const letter = rank;
+    center = `
+      <rect x="18" y="30" width="64" height="70" rx="6" fill="none" stroke="${color}" stroke-width="1.4" opacity="0.55"/>
+      <rect x="22" y="34" width="56" height="62" rx="4" fill="none" stroke="${color}" stroke-width="0.7" opacity="0.4"/>
+      <text x="50" y="72" text-anchor="middle" font-family="Georgia,serif" font-size="34" font-weight="700" fill="${color}" opacity="0.9">${letter}</text>
+      ${suitPath(suit, 50, 92, 1.5, color)}
+      ${suitPath(suit, 50, 40, 1.5, color)}
+    `;
+  }
+  const corner = (x,y,rot) => `
+    <g transform="translate(${x},${y}) rotate(${rot})">
+      <text x="0" y="0" font-family="Georgia,serif" font-size="13" font-weight="700" fill="${color}" text-anchor="middle">${rank}</text>
+      ${suitPath(suit, 0, 13, 0.85, color)}
+    </g>`;
+  return `<svg viewBox="0 0 100 140" xmlns="http://www.w3.org/2000/svg">
+    <rect x="1" y="1" width="98" height="138" rx="7" fill="#faf7ee" stroke="#cfc7ae" stroke-width="1"/>
+    <rect x="4" y="4" width="92" height="132" rx="5" fill="none" stroke="${color}" stroke-opacity="0.12" stroke-width="1"/>
+    ${corner(12,14,0)}
+    ${corner(88,126,180)}
+    ${center}
+  </svg>`;
+}
+
+function cardBackSVG(){
+  return `<svg viewBox="0 0 100 140" xmlns="http://www.w3.org/2000/svg">
+    <rect x="1" y="1" width="98" height="138" rx="7" fill="#7a1420" stroke="#d4af37" stroke-width="1.5"/>
+    <rect x="7" y="7" width="86" height="126" rx="4" fill="none" stroke="#d4af37" stroke-width="1"/>
+    <defs>
+      <pattern id="bp" width="12" height="12" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+        <rect width="12" height="12" fill="#7a1420"/>
+        <circle cx="6" cy="6" r="2.1" fill="#d4af37" opacity="0.55"/>
+      </pattern>
+    </defs>
+    <rect x="10" y="10" width="80" height="120" rx="3" fill="url(#bp)"/>
+    <circle cx="50" cy="70" r="17" fill="#7a1420" stroke="#d4af37" stroke-width="1.4"/>
+    <text x="50" y="76" text-anchor="middle" font-family="Georgia,serif" font-size="16" fill="#d4af37">♠</text>
+  </svg>`;
+}
+
+function chipSVG(value){
+  const color = CHIP_COLORS[value];
+  const stripes = 8;
+  let dashes = '';
+  for (let i=0;i<stripes;i++){
+    const a = (360/stripes)*i;
+    dashes += `<rect x="46" y="2" width="8" height="14" rx="2" fill="#fff" opacity="0.85" transform="rotate(${a} 50 50)"/>`;
+  }
+  return `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="50" cy="50" r="48" fill="${color}" stroke="#111" stroke-width="1"/>
+    ${dashes}
+    <circle cx="50" cy="50" r="34" fill="${color}" stroke="#fff" stroke-width="2" opacity="0.9"/>
+    <circle cx="50" cy="50" r="28" fill="none" stroke="#fff" stroke-width="1" opacity="0.5"/>
+    <text x="50" y="57" text-anchor="middle" font-family="Georgia,serif" font-size="20" font-weight="700" fill="#fff">${value}</text>
+  </svg>`;
+}
+
+function prefersReducedMotion(){
+  return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+}
+function easeOutCubic(t){ return 1 - Math.pow(1 - t, 3); }
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+/* ---------------------------------------------------------------------------
+   SOUND — a short "card snap/slide" landing sound, synthesized entirely
+   with the Web Audio API (no external audio files, no CDN, fully
+   self-contained). It's a filtered noise burst (the "snap" of a card
+   hitting felt) layered with a very short downward-pitched tone (the
+   "slide"). Respects a mute toggle; the AudioContext is created lazily on
+   first use so it's always initiated from within a user-gesture call chain
+   (clicking Deal/Hit/etc), satisfying browser autoplay policies.
+   --------------------------------------------------------------------------- */
+const Sound = {
+  ctx: null,
+  muted: false,
+  ensureCtx(){
+    if (!this.ctx){
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      try { this.ctx = new AC(); } catch (e) { return null; }
+    }
+    if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
+    return this.ctx;
+  },
+  playCardLand(){
+    if (this.muted) return;
+    const ctx = this.ensureCtx();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+
+    // "snap": a brief burst of filtered noise with a fast exponential decay
+    const bufSize = Math.max(1, Math.floor(ctx.sampleRate * 0.07));
+    const buffer = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufSize; i++){
+      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufSize, 2.2);
+    }
+    const noise = ctx.createBufferSource();
+    noise.buffer = buffer;
+    const bandpass = ctx.createBiquadFilter();
+    bandpass.type = 'bandpass';
+    bandpass.frequency.value = 2600;
+    bandpass.Q.value = 0.7;
+    const noiseGain = ctx.createGain();
+    noiseGain.gain.setValueAtTime(0.45, now);
+    noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
+    noise.connect(bandpass).connect(noiseGain).connect(ctx.destination);
+    noise.start(now);
+    noise.stop(now + 0.08);
+
+    // "slide": a very short downward-pitched tone for the felt-slide tail
+    const osc = ctx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(520, now);
+    osc.frequency.exponentialRampToValueAtTime(180, now + 0.05);
+    const oscGain = ctx.createGain();
+    oscGain.gain.setValueAtTime(0.13, now);
+    oscGain.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
+    osc.connect(oscGain).connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.07);
+  }
+};
+
+/* ---------- Rendering ---------- */
+const Render = {
+  // Builds a card in its FINAL resting position/rotation. Each physical
+  // card object is drawn exactly once from the shoe, so it's safe to stash
+  // small per-card animation state directly on it:
+  //   card._restRot  - a deterministic small settle rotation, so a hand's
+  //                    cards don't all land dead-parallel like a printout,
+  //                    but instead fan out slightly the way a real dealer's
+  //                    cards do.
+  //   card._animated - true once its entrance animation has played, so that
+  //                    re-rendering a hand (e.g. after a sibling card is
+  //                    added) never replays the deal for cards already at
+  //                    rest — only genuinely new cards fly in.
+  cardEl(card, faceDown, dealIndex){
+    const slot = document.createElement('div');
+    slot.className = 'card-slot';
+    const inner = document.createElement('div');
+    inner.className = 'card-inner';
+    const front = document.createElement('div');
+    front.className = 'card-face';
+    front.innerHTML = cardFaceSVG(card.rank, card.suit);
+    const back = document.createElement('div');
+    back.className = 'card-back-face';
+    back.innerHTML = cardBackSVG();
+    inner.appendChild(front);
+    inner.appendChild(back);
+    slot.appendChild(inner);
+    if (faceDown) slot.classList.add('flipped');
+
+    if (card._restRot === undefined) card._restRot = (Math.random() * 7 - 3.5);
+
+    if (card._animated){
+      slot.style.transform = `rotate(${card._restRot}deg)`;
+      slot.style.opacity = '1';
+    } else {
+      card._animated = true;
+      if (prefersReducedMotion()){
+        // Reduced motion: skip the arc, but still play the landing sound —
+        // synced to roughly when the (much shorter) fallback settle happens.
+        slot.classList.add('deal-fallback');
+        slot.style.transform = `rotate(${card._restRot}deg)`;
+        setTimeout(() => Sound.playCardLand(), 150);
+      } else {
+        slot.style.transform = `rotate(${card._restRot}deg)`;
+        slot.style.opacity = '0';
+        requestAnimationFrame(() => this.dealCardArc(slot, dealIndex, card._restRot));
+      }
+    }
+    return slot;
+  },
+  // JS-driven quadratic-bezier arc: each card travels from an approximate
+  // shoe position (top right of the felt) along a curved path — not a
+  // straight linear slide — with in-flight rotation that settles into
+  // `restRot`, ease-out timing (quick acceleration, gentle settle), and a
+  // brief scale-up as it "lands". Paced deliberately slow (a real dealer's
+  // unhurried rhythm, not a snappy UI transition); the landing sound fires
+  // exactly when the arc finishes, not when it starts.
+  dealCardArc(el, dealIndex, restRot){
+    const fromX = 128 - dealIndex * 5;
+    const fromY = -118 - dealIndex * 3;
+    const fromRot = 22 + dealIndex * 5;
+    const ctrlX = fromX * 0.45;          // bezier control point, pulled well
+    const ctrlY = fromY * 0.55 - 50;     // above the straight line for a visible swoop
+    const duration = 680;
+    const start = performance.now();
+    function frame(now){
+      const t = Math.min(1, (now - start) / duration);
+      const e = easeOutCubic(t);
+      const it = 1 - e;
+      const x = it*it*fromX + 2*it*e*ctrlX + e*e*0;
+      const y = it*it*fromY + 2*it*e*ctrlY + e*e*0;
+      const rot = fromRot + (restRot - fromRot) * e;
+      const scale = 0.72 + 0.28 * e;
+      el.style.transform = `translate(${x.toFixed(1)}px,${y.toFixed(1)}px) rotate(${rot.toFixed(1)}deg) scale(${scale.toFixed(3)})`;
+      el.style.opacity = String(Math.min(1, t / 0.35));
+      if (t < 1) requestAnimationFrame(frame);
+      else { el.style.transform = `rotate(${restRot}deg)`; Sound.playCardLand(); }
+    }
+    requestAnimationFrame(frame);
+  },
+  flipCard(slotEl){
+    slotEl.classList.remove('flipped');
+  },
+  // Reveals the dealer's hole card by flipping the EXISTING slot element (so
+  // the 3D flip transition actually plays), rather than the normal
+  // rebuild-from-scratch render — a rebuilt element would already be
+  // face-up the instant it appears, with nothing left to animate.
+  revealHoleCard(){
+    const el = document.getElementById('dealerCards');
+    const holeSlot = el.children[1];
+    if (holeSlot && holeSlot.classList.contains('flipped')){
+      this.flipCard(holeSlot);
+    } else {
+      this.renderDealer();
+    }
+    document.getElementById('dealerTotal').textContent = HandUtil.display(Game.dealerCards);
+  },
+  renderDealer(){
+    const el = document.getElementById('dealerCards');
+    el.innerHTML = '';
+    Game.dealerCards.forEach((card, i) => {
+      const faceDown = (i === 1 && !Game.dealerHoleRevealed);
+      el.appendChild(this.cardEl(card, faceDown, i));
+    });
+    const totalEl = document.getElementById('dealerTotal');
+    if (Game.dealerHoleRevealed || Game.dealerCards.length === 0){
+      totalEl.textContent = Game.dealerCards.length ? HandUtil.display(Game.dealerCards) : ' ';
+    } else if (Game.dealerCards.length){
+      totalEl.textContent = `showing ${groupBaseValue(Game.dealerCards[0].group) === 11 ? 'A' : groupBaseValue(Game.dealerCards[0].group)}`;
+    } else {
+      totalEl.textContent = ' ';
+    }
+  },
+  renderHands(){
+    const wrap = document.getElementById('handGroups');
+    wrap.innerHTML = '';
+    Game.hands.forEach((h, idx) => {
+      const g = document.createElement('div');
+      g.className = 'hand-group';
+      if (idx === Game.activeHandIndex && Game.phase === 'player-turn') g.classList.add('is-active');
+      if (Game.hands.length > 1){
+        const tag = document.createElement('div');
+        tag.className = 'hand-tag';
+        tag.textContent = 'Hand ' + (idx+1);
+        g.appendChild(tag);
+      }
+      const cardsEl = document.createElement('div');
+      cardsEl.className = 'cards';
+      h.cards.forEach((c,i) => cardsEl.appendChild(this.cardEl(c, false, i)));
+      g.appendChild(cardsEl);
+      const totalEl = document.createElement('div');
+      totalEl.className = 'hand-total';
+      let label = HandUtil.display(h.cards);
+      if (h.status === 'bust') label += ' — BUST';
+      else if (h.status === 'blackjack') label = 'BLACKJACK!';
+      else if (h.status === 'surrendered') label += ' — SURRENDERED';
+      else if (h.status === 'doubled') label += ' (doubled)';
+      totalEl.textContent = `$${h.bet} · ${label}`;
+      g.appendChild(totalEl);
+      if (h._fx === 'win') g.classList.add('is-win');
+      if (h._fx === 'bust') g.classList.add('is-bust');
+      wrap.appendChild(g);
+    });
+  },
+  renderShoe(){
+    document.getElementById('shoeCountTxt').textContent = `${Game.shoe.remainingCount()} cards left`;
+    const pct = Game.shoe.penetrationPct();
+    document.getElementById('penFill').style.width = Math.min(100,pct) + '%';
+    document.getElementById('penTxt').textContent = pct + '%';
+    document.getElementById('cutMark').style.left = Rules.penetration + '%';
+  },
+  renderBankroll(){
+    document.getElementById('bankrollTxt').textContent = Game.bankroll.toLocaleString();
+    document.getElementById('currentBetTxt').textContent = (Game.pendingBet || (Game.hands[0]?Game.hands[0].bet:0)).toLocaleString();
+  },
+  renderChipsInPlay(){
+    const el = document.getElementById('chipsInPlay');
+    el.innerHTML = '';
+    const chips = Game.betChips;
+    const total = chips.reduce((a,b)=>a+b, 0);
+    chips.forEach((v, i) => {
+      const c = document.createElement('div');
+      c.className = 'chip-stack-el';
+      c.style.width = '38px'; c.style.height = '38px';
+      c.style.transform = `translate(-50%, calc(-50% - ${i*5}px))`;
+      c.style.filter = 'drop-shadow(0 3px 4px rgba(0,0,0,.5))';
+      c.innerHTML = chipSVG(v);
+      el.appendChild(c);
+    });
+    document.getElementById('betAmount').textContent = total > 0 ? ('$' + total) : 'Place a bet';
+  },
+  renderChipRack(){
+    const rack = document.getElementById('chipRack');
+    rack.innerHTML = '';
+    CHIP_VALUES.forEach(v => {
+      const btn = document.createElement('button');
+      btn.className = 'chip-btn';
+      btn.innerHTML = chipSVG(v);
+      btn.title = 'Bet $' + v;
+      btn.addEventListener('click', () => UI.addChip(v));
+      rack.appendChild(btn);
+    });
+  },
+  renderResult(text, cls){
+    const el = document.getElementById('resultBanner');
+    el.textContent = text;
+    el.className = 'result-banner ' + (cls||'') ;
+    void el.offsetWidth;
+    el.classList.add('show');
+  },
+  clearResult(){
+    const el = document.getElementById('resultBanner');
+    el.className = 'result-banner';
+    el.textContent = ' ';
+  },
+  // Keeps the count badge's TEXT up to date whenever the running count
+  // changes, regardless of whether it's currently visible — visibility
+  // itself is governed entirely by CountPeek (a momentary 2s reveal), not
+  // by this function.
+  renderCount(){
+    const badge = document.getElementById('countBadge');
+    const tc = trueCount(CountState.running, Game.shoe.remainingCount());
+    const rcSign = CountState.running > 0 ? '+' : '';
+    badge.textContent = `RC ${rcSign}${CountState.running} / TC ${tc>=0?'+':''}${tc.toFixed(1)}`;
+  },
+  renderActionButtons(){
+    const buttons = document.querySelectorAll('#actionRow [data-action]');
+    const legal = Game.phase === 'player-turn' ? Game.legalActions() : {};
+    buttons.forEach(b => {
+      const a = b.dataset.action;
+      b.disabled = !legal[a];
+    });
+    // Permanently visible for the whole duration of an active hand, hidden
+    // otherwise — never behind a discovery toggle.
+    const revealBtn = document.getElementById('revealBtn');
+    revealBtn.classList.toggle('hidden', Game.phase !== 'player-turn');
+    if (Game.phase !== 'player-turn' && Advisor.open) Advisor.close();
+  },
+  renderAll(){
+    this.renderDealer();
+    this.renderHands();
+    this.renderShoe();
+    this.renderBankroll();
+    this.renderChipsInPlay();
+    this.renderActionButtons();
+    this.renderCount();
+    const dealBtn = document.getElementById('dealBtn');
+    dealBtn.disabled = !(Game.phase === 'betting' && Game.pendingBet > 0);
+    document.getElementById('rebetBtn').disabled = !(Game.phase === 'betting' && Game.lastBet > 0 && Game.pendingBet === 0);
+    document.getElementById('clearBetBtn').disabled = !(Game.phase === 'betting' && Game.pendingBet > 0);
+    document.getElementById('insuranceBox').classList.toggle('hidden', Game.phase !== 'insurance');
+    document.getElementById('betRow').style.display = (Game.phase === 'betting') ? 'flex' : 'none';
+    document.getElementById('chipRack').style.display = (Game.phase === 'betting') ? 'flex' : 'none';
+    document.getElementById('actionRow').style.display = (Game.phase === 'player-turn') ? 'flex' : 'none';
+  }
+};
+
+/* ---------------------------------------------------------------------------
+   COUNT PEEK — the count button is a momentary reveal, not a persistent
+   on/off toggle: every click shows the CURRENT count for exactly 2 seconds,
+   fading out afterward. Clicking again (even while already visible) resets
+   the 2-second timer and re-shows the current numbers — there is no
+   persistent "open" state to track.
+   --------------------------------------------------------------------------- */
+const CountPeek = {
+  hideTimer: null,
+  clearTimer: null,
+  show(){
+    const badge = document.getElementById('countBadge');
+    clearTimeout(this.hideTimer);
+    clearTimeout(this.clearTimer);
+    Render.renderCount(); // always the freshest numbers, never a stale snapshot
+    badge.classList.remove('hidden');
+    void badge.offsetWidth; // force reflow so re-adding 'show' retriggers the fade-in
+    badge.classList.add('show');
+    this.hideTimer = setTimeout(() => this.hide(), 2000);
+  },
+  hide(){
+    const badge = document.getElementById('countBadge');
+    badge.classList.remove('show');
+    this.clearTimer = setTimeout(() => badge.classList.add('hidden'), 320);
+  }
+};
+
+/* ---------- Legal actions for the active hand ---------- */
+Game.legalActions = function(){
+  if (this.phase !== 'player-turn' || this.activeHandIndex < 0) return {};
+  const h = this.hands[this.activeHandIndex];
+  if (!h || h.status !== 'active') return {};
+  const legal = {hit:true, stand:true, double:false, split:false, surrender:false};
+  if (h.cards.length === 2 && this.bankroll >= h.bet){
+    legal.double = !(h.fromSplit && !Rules.das);
+  }
+  if (h.cards.length === 2 && HandUtil.isPairEligible(h.cards) && this.hands.length < 4 && this.bankroll >= h.bet){
+    if (!(h.isSplitAces)) legal.split = true; // aces split only once
+  }
+  if (h.cards.length === 2 && !h.fromSplit && this.hands.length === 1 && Rules.surrender){
+    legal.surrender = true;
+  }
+  return legal;
+};
+
+/* ---------------------------------------------------------------------------
+   GAME FLOW
+   --------------------------------------------------------------------------- */
+// Draws a physical card from the shoe — this ALWAYS depletes the shoe (and
+// so always affects the EV engine's composition) immediately, regardless
+// of visibility. `visible` controls only whether the SEPARATE Hi-Lo running
+// count is updated now; a card dealt with visible=false (e.g. the dealer's
+// hole card) must later be handed to CountEngine.reveal() individually, at
+// the exact moment it's actually flipped face up.
+function dealCardTo(arr, visible){
+  const card = Game.shoe.draw();
+  arr.push(card);
+  if (visible) CountEngine.reveal(card);
+  return card;
+}
+
+const Flow = {
+  startBet(value){
+    if (Game.phase !== 'betting') return;
+    if (Game.bankroll - Game.pendingBet < value) return;
+    Game.pendingBet += value;
+    Game.betChips.push(value);
+    document.getElementById('betSuggestion').classList.add('hidden');
+    Render.renderAll();
+  },
+  clearBet(){
+    if (Game.phase !== 'betting') return;
+    Game.pendingBet = 0;
+    Game.betChips = [];
+    Render.renderAll();
+  },
+  rebet(){
+    if (Game.phase !== 'betting' || !Game.lastBet) return;
+    if (Game.bankroll < Game.lastBet) return;
+    Game.pendingBet = Game.lastBet;
+    Game.betChips = Game.lastBetChips.slice();
+    Render.renderAll();
+  },
+  // Recommends a bet size from the CURRENT true count, recalculated fresh
+  // every click (never cached from an earlier point in the shoe). See the
+  // BET_SPREAD_* constants near the top of the file for the simplified
+  // advantage-play model this uses — display only, does not place the bet.
+  suggestBet(){
+    if (Game.phase !== 'betting') return;
+    const el = document.getElementById('betSuggestion');
+    const tc = trueCount(CountState.running, Game.shoe.remainingCount());
+    const tcStr = (tc >= 0 ? '+' : '') + tc.toFixed(1);
+    const units = recommendedBetUnits(tc);
+    let amount = units * TABLE_MIN_BET;
+    amount = Math.max(TABLE_MIN_BET, Math.min(amount, Game.bankroll || TABLE_MIN_BET));
+    const edgePct = edgePctFromTrueCount(tc);
+    let text;
+    if (tc <= BET_SPREAD_NO_EDGE_TC){
+      text = `True count ${tcStr} → no edge. Flat bet — no edge, bet the minimum ($${amount}).`;
+    } else {
+      text = `True count ${tcStr} → estimated edge +${edgePct.toFixed(1)}%. Recommended bet: ${units} unit${units>1?'s':''} ($${amount}).`;
+    }
+    el.textContent = text;
+    el.classList.remove('hidden', 'warn');
+  },
+  // Deals the opening hand as a natural, human-paced sequence rather than
+  // all at once: player card 1 -> dealer up-card -> player card 2 -> dealer
+  // hole card, each separated by a short readable pause. Game.phase is set
+  // to the transient 'dealing' state for the duration so a rapid double
+  // click on Deal can't re-enter this while cards are still in the air.
+  async deal(){
+    if (Game.phase !== 'betting' || Game.pendingBet <= 0) return;
+    Advisor.close();
+    Game.reshuffleIfNeeded();
+    Game.phase = 'dealing';
+    Game.bankroll -= Game.pendingBet;
+    Game.lastBet = Game.pendingBet;
+    Game.lastBetChips = Game.betChips.slice();
+    const bet = Game.pendingBet;
+    Game.pendingBet = 0;
+    Game.dealerCards = [];
+    Game.dealerHoleRevealed = false;
+    Game.insuranceBet = 0;
+    Render.clearResult();
+    const playerCards = [];
+    Game.hands = [Game.newHand(playerCards, bet)];
+    Game.activeHandIndex = 0;
+    Render.renderAll();
+
+    const DEAL_DELAY = prefersReducedMotion() ? 60 : 480; // a deliberate, unhurried dealer rhythm
+    await sleep(DEAL_DELAY);
+    dealCardTo(playerCards, true);               // 1. player card
+    Render.renderAll();
+    await sleep(DEAL_DELAY);
+    dealCardTo(Game.dealerCards, true);           // 2. dealer up-card, face up
+    Render.renderAll();
+    await sleep(DEAL_DELAY);
+    dealCardTo(playerCards, true);                // 3. player card
+    Render.renderAll();
+    await sleep(DEAL_DELAY);
+    dealCardTo(Game.dealerCards, false);          // 4. dealer hole card, face down (unseen -> not counted yet)
+    Render.renderAll();
+
+    const upGroup = Game.dealerCards[0].group;
+    if (upGroup === 0){
+      Game.phase = 'insurance';
+      Render.renderAll();
+      return;
+    }
+    this.resolvePeekAndContinue(upGroup);
+  },
+  insuranceDecision(taken){
+    if (Game.phase !== 'insurance') return;
+    if (taken){
+      Game.insuranceBet = Math.floor(Game.hands[0].bet / 2);
+      Game.bankroll -= Game.insuranceBet;
+    }
+    this.resolvePeekAndContinue(Game.dealerCards[0].group);
+  },
+  resolvePeekAndContinue(upGroup){
+    const peeks = (upGroup === 0 || upGroup === 9);
+    if (peeks && HandUtil.isBlackjack(Game.dealerCards)){
+      Game.dealerHoleRevealed = true;
+      CountEngine.reveal(Game.dealerCards[1]);
+      Render.revealHoleCard();
+      Render.renderCount();
+      if (Game.insuranceBet > 0){
+        Game.bankroll += Game.insuranceBet * 3; // stake back + 2:1
+      }
+      setTimeout(() => this.settleAllVsDealerBlackjack(), prefersReducedMotion() ? 0 : 600);
+      return;
+    }
+    // no dealer blackjack: insurance bet (if any) is lost, already deducted
+    const h = Game.hands[0];
+    if (HandUtil.isBlackjack(h.cards)){
+      h.status = 'blackjack';
+      Game.phase = 'dealer-turn';
+      Render.renderAll();
+      this.revealAndPlayDealer(true);
+      return;
+    }
+    Game.phase = 'player-turn';
+    Render.renderAll();
+  },
+  settleAllVsDealerBlackjack(){
+    Game.phase = 'settled';
+    let bannerText = 'Dealer Blackjack';
+    let cls = 'lose';
+    Game.hands.forEach(h => {
+      if (HandUtil.isBlackjack(h.cards)){
+        h.result = 'push'; Game.bankroll += h.bet; bannerText = 'Push'; cls='push';
+      } else {
+        h.result = 'lose';
+      }
+    });
+    Render.renderAll();
+    Render.renderResult(bannerText, cls);
+    this.recordStats();
+    this.finishRound();
+  },
+  action(name){
+    if (Game.phase !== 'player-turn') return;
+    const legal = Game.legalActions();
+    if (!legal[name]) return;
+    const h = Game.hands[Game.activeHandIndex];
+    if (name === 'hit'){
+      dealCardTo(h.cards, true);
+      Render.renderAll();
+      if (HandUtil.isBust(h.cards)){
+        h.status = 'bust'; h._fx = 'bust';
+        this.nextHandOrDealer();
+      }
+    } else if (name === 'stand'){
+      h.status = 'stood';
+      this.nextHandOrDealer();
+    } else if (name === 'double'){
+      Game.bankroll -= h.bet;
+      h.bet *= 2;
+      dealCardTo(h.cards, true);
+      h.status = HandUtil.isBust(h.cards) ? 'bust' : 'doubled';
+      if (h.status==='bust') h._fx='bust';
+      Render.renderAll();
+      this.nextHandOrDealer();
+    } else if (name === 'surrender'){
+      h.status = 'surrendered';
+      Game.bankroll += Math.floor(h.bet/2);
+      this.nextHandOrDealer();
+    } else if (name === 'split'){
+      this.doSplit(h);
+      return;
+    }
+    Render.renderAll();
+  },
+  async doSplit(h){
+    Game.bankroll -= h.bet;
+    const c1 = h.cards[0], c2 = h.cards[1];
+    const isAces = c1.group === 0;
+    const handA = Game.newHand([c1], h.bet);
+    const handB = Game.newHand([c2], h.bet);
+    handA.fromSplit = true; handB.fromSplit = true;
+    handA.isSplitAces = isAces; handB.isSplitAces = isAces;
+    const idx = Game.activeHandIndex;
+    Game.hands.splice(idx, 1, handA, handB);
+    Render.renderAll();
+    const DELAY = prefersReducedMotion() ? 40 : 480;
+    await sleep(DELAY);
+    dealCardTo(handA.cards, true);
+    Render.renderAll();
+    await sleep(DELAY);
+    dealCardTo(handB.cards, true);
+    if (isAces){
+      handA.status = HandUtil.isBust(handA.cards) ? 'bust' : 'stood';
+      handB.status = HandUtil.isBust(handB.cards) ? 'bust' : 'stood';
+    }
+    Game.activeHandIndex = idx;
+    Render.renderAll();
+    if (Game.hands[Game.activeHandIndex].status !== 'active') this.nextHandOrDealer();
+  },
+  nextHandOrDealer(){
+    Advisor.close(); // any open recommendation is for the hand that just finished acting
+    let i = Game.activeHandIndex + 1;
+    while (i < Game.hands.length && Game.hands[i].status !== 'active') i++;
+    if (i < Game.hands.length){
+      Game.activeHandIndex = i;
+      Render.renderAll();
+      return;
+    }
+    Game.activeHandIndex = -1;
+    Game.phase = 'dealer-turn';
+    Render.renderAll();
+    const anyoneLeft = Game.hands.some(h => h.status === 'stood' || h.status === 'doubled' || h.status === 'blackjack');
+    this.revealAndPlayDealer(anyoneLeft);
+  },
+  revealAndPlayDealer(needsPlay){
+    Game.dealerHoleRevealed = true;
+    CountEngine.reveal(Game.dealerCards[1]);
+    Render.revealHoleCard();
+    Render.renderCount();
+    const step = () => {
+      const {total, softAces} = HandUtil.compute(Game.dealerCards);
+      const mustHit = needsPlay && (total < 17 || (total === 17 && softAces > 0 && Rules.h17));
+      if (!needsPlay || !mustHit){
+        this.settle();
+        return;
+      }
+      dealCardTo(Game.dealerCards, true);
+      Render.renderDealer();
+      Render.renderCount();
+      setTimeout(step, prefersReducedMotion() ? 150 : 750);
+    };
+    setTimeout(step, prefersReducedMotion() ? 150 : 700);
+  },
+  settle(){
+    Game.phase = 'settled';
+    const dTotal = HandUtil.compute(Game.dealerCards).total;
+    const dBust = dTotal > 21;
+    let anyWin = false, anyLose = false;
+    Game.hands.forEach(h => {
+      if (h.status === 'surrendered') { h.result='lose'; return; }
+      if (h.status === 'bust') { h.result = 'lose'; anyLose = true; return; }
+      if (h.status === 'blackjack'){ h.result = 'win'; Game.bankroll += Math.floor(h.bet*2.5); anyWin=true; h._fx='win'; return; }
+      const pTotal = HandUtil.compute(h.cards).total;
+      if (dBust || pTotal > dTotal){ h.result='win'; Game.bankroll += h.bet*2; anyWin=true; h._fx='win'; }
+      else if (pTotal < dTotal){ h.result='lose'; anyLose=true; }
+      else { h.result='push'; Game.bankroll += h.bet; }
+    });
+    let text, cls;
+    if (Game.hands.length > 1){
+      text = anyWin && !anyLose ? 'You Win' : (!anyWin && anyLose ? 'Dealer Wins' : 'Mixed Result');
+      cls = anyWin && !anyLose ? 'win' : (!anyWin && anyLose ? 'lose' : 'push');
+    } else {
+      const only = Game.hands[0];
+      const r = only.result;
+      if (only.status === 'blackjack') text = 'Blackjack! You Win';
+      else if (only.status === 'surrendered') text = 'Surrendered';
+      else if (only.status === 'bust') text = 'You Busted';
+      else if (r === 'win') text = dBust ? 'You Win — Dealer Busts' : 'You Win';
+      else if (r === 'lose') text = 'Dealer Wins';
+      else text = 'Push';
+      cls = r;
+    }
+    Render.renderAll();
+    Render.renderResult(text, cls);
+    this.recordStats();
+    this.finishRound();
+  },
+  recordStats(){
+    Game.hands.forEach(h => {
+      Stats.hands++;
+      Stats.wagered += h.bet;
+      if (h.result === 'win'){
+        Stats.wins++;
+        const gain = h.status==='blackjack' ? h.bet*1.5 : h.bet;
+        Stats.netUnits += gain;
+        if (h.status==='blackjack') Stats.blackjacks++;
+      } else if (h.result === 'lose'){
+        Stats.losses++;
+        Stats.netUnits -= (h.status==='surrendered' ? h.bet/2 : h.bet);
+      } else if (h.result === 'push'){
+        Stats.pushes++;
+      }
+    });
+  },
+  finishRound(){
+    Game.phase = 'betting';
+    // Keep the just-finished bet set on the table automatically rather than
+    // resetting to zero, so Deal is immediately clickable again with the
+    // same amount — no manual "Rebet" click or re-picking chips required.
+    // The player can still change it (chips, Clear Bet) before dealing;
+    // this only removes the need to reconfirm the SAME amount. Independent
+    // of Auto Deal below, which has its own bankroll-fallback logic and
+    // runs (or not) regardless of this.
+    if (Game.lastBet > 0 && Game.bankroll >= Game.lastBet){
+      Game.pendingBet = Game.lastBet;
+      Game.betChips = Game.lastBetChips.slice();
+    } else {
+      Game.pendingBet = 0;
+      Game.betChips = [];
+    }
+    setTimeout(() => {
+      Render.renderAll();
+      // Only ever reached once the hand is FULLY settled (finishRound is
+      // exclusively called from settle() / settleAllVsDealerBlackjack(),
+      // never mid-insurance, mid-split, or any other unresolved state), so
+      // it's always safe to consider auto-dealing the next hand here.
+      if (AutoDeal.enabled) setTimeout(() => AutoDeal.trigger(), 1300);
+    }, 50);
+  }
+};
+
+/* ---------------------------------------------------------------------------
+   AUTO DEAL — when enabled, automatically re-bets the exact amount of the
+   PREVIOUS hand (not the Suggest Bet recommendation) and deals the next
+   hand as soon as the current one is fully resolved. Persists on/off across
+   hands until the player turns it off.
+   --------------------------------------------------------------------------- */
+const AutoDeal = {
+  enabled: false,
+  trigger(){
+    if (!this.enabled || Game.phase !== 'betting') return;
+    if (!Game.lastBet){ return; } // nothing to repeat yet
+    let amount = Game.lastBet;
+    let note = '';
+    if (amount > Game.bankroll || amount <= 0){
+      // Fall back to the table minimum, or the max the bankroll allows if
+      // even that's unaffordable — whichever is lower.
+      amount = Math.min(TABLE_MIN_BET, Game.bankroll);
+      note = `Bankroll too low to repeat the $${Game.lastBet} bet — using $${amount} instead.`;
+    }
+    if (amount <= 0){
+      // Can't place any bet at all; stop auto-dealing rather than looping forever.
+      this.enabled = false;
+      document.getElementById('autoDealToggle').checked = false;
+      return;
+    }
+    Game.pendingBet = amount;
+    Game.betChips = [amount];
+    if (note){
+      const el = document.getElementById('betSuggestion');
+      el.textContent = note;
+      el.classList.remove('hidden');
+      el.classList.add('warn');
+    }
+    Render.renderAll();
+    Flow.deal();
+  }
+};
+
+/* ---------------------------------------------------------------------------
+   ADVISOR — "Best Move" side panel
+   ---------------------------------------------------------------------------
+   The Best Move button is a PERMANENT fixture on screen for the whole
+   duration of an active hand — not something hidden behind a toggle.
+   EVERY click re-triggers the full reveal, recomputed fresh from whatever
+   the current hand looks like at that instant (so clicking again after a
+   hit shows the new total's recommendation, never a stale one):
+     - highlights/pulses the corresponding action button on the table,
+     - opens (or, if already open, simply refreshes) a side panel listing
+       every legal action's win% and EV%, best one blinking, sorted best
+       to worst,
+     - shows a one-sentence "{total} vs dealer {up}, count {±n} -> {action}"
+       explanation built from the live hand/upcard/count.
+   There is deliberately no "click again to close" behavior on this button
+   — closing is only ever done via the panel's own ✕ (Advisor.close()), or
+   automatically when the hand you were looking at stops being current.
+
+   IMPORTANT — the count is not a second opinion here: every EV/win% number
+   below comes from EV.*, which already computes exact probabilities from
+   the REAL depleted shoe (Game.unseenComposition()). An accurate depleted-
+   shoe simulation inherently contains the same information the Hi-Lo count
+   approximates, so the count is a diagnostic/display layer only — there is
+   no separate "count-based deviation table" that could ever disagree with
+   the exact EV numbers shown here.
+   --------------------------------------------------------------------------- */
+const Advisor = {
+  open: false,
+
+  reveal(){
+    if (Game.phase !== 'player-turn') return;
+    this.open = true;
+    document.getElementById('revealBtn').classList.add('open');
+    document.getElementById('sidePanel').classList.add('open');
+    this.run();
+  },
+
+  close(){
+    this.open = false;
+    document.getElementById('revealBtn').classList.remove('open');
+    document.getElementById('sidePanel').classList.remove('open');
+    document.querySelectorAll('#actionRow [data-action]').forEach(b => b.classList.remove('reveal-highlight'));
+  },
+
+  run(){
+    if (Game.phase !== 'player-turn') return;
+    const h = Game.hands[Game.activeHandIndex];
+    const upGroup = Game.dealerCards[0].group;
+    const comp = Game.unseenComposition();
+    const {total, softAces} = HandUtil.compute(h.cards);
+    const s17 = !Rules.h17;
+    const legal = Game.legalActions();
+
+    const results = [];
+    results.push({code:'S', ev: EV.standEV(total, upGroup, comp, s17), outcome: EV.standOutcome(total, upGroup, comp, s17)});
+    if (legal.hit) results.push({code:'H', ev: EV.hitEV(total, softAces, upGroup, comp, s17), outcome: EV.hitOutcome(total, softAces, upGroup, comp, s17)});
+    if (legal.double) results.push({code:'D', ev: EV.doubleEV(total, softAces, upGroup, comp, s17), outcome: EV.doubleOutcome(total, softAces, upGroup, comp, s17)});
+    if (legal.surrender) results.push({code:'R', ev: -0.5, outcome: {win:0, push:0, lose:1}});
+    let pairGroup = null;
+    if (legal.split){
+      pairGroup = h.cards[0].group;
+      results.push({code:'P', ev: EV.splitEV(pairGroup, upGroup, comp, s17, Rules.das), outcome: EV.splitOutcome(pairGroup, upGroup, comp, s17, Rules.das)});
+    }
+    results.sort((a,b) => b.ev - a.ev);
+    const best = results[0];
+
+    // book answer, from the same-shape category
+    let bookCode = null;
+    if (pairGroup !== null && h.cards.length === 2){
+      bookCode = Strategy.lookup(Rules, 'pair', pairGroup, upGroup);
+    } else if (softAces > 0 && h.cards.length === 2 && total <= 20){
+      bookCode = Strategy.lookup(Rules, 'soft', total - 11, upGroup);
+    } else if (total >= 8 && total <= 20) {
+      bookCode = Strategy.lookup(Rules, 'hard', total, upGroup);
+    }
+    // book code might recommend an action not currently legal (e.g. surrender after hit) — fall back gracefully
+    if (bookCode && !legal[ACTION_TO_DATA[bookCode]] && bookCode !== 'S'){
+      bookCode = (bookCode === 'D' || bookCode === 'R' || bookCode === 'P') ? 'H' : bookCode;
+    }
+
+    // (a) highlight/pulse whichever action button matches the best move
+    document.querySelectorAll('#actionRow [data-action]').forEach(b => b.classList.remove('reveal-highlight'));
+    const btn = document.querySelector(`#actionRow [data-action="${ACTION_TO_DATA[best.code]}"]`);
+    if (btn) btn.classList.add('reveal-highlight');
+
+    this.render(results, best, bookCode, comp, upGroup, s17, total, softAces);
+  },
+
+  explanation(code, total, softAces, upGroup, dist){
+    const bust = (dist && dist.bust) ? Math.round(dist.bust*100) : null;
+    const upLabel = upGroup===0?'Ace':groupBaseValue(upGroup);
+    switch(code){
+      case 'S': return `Standing locks in ${total}${softAces>0?' (soft)':''} while the dealer, showing ${upLabel}, busts about ${bust}% of the time.`;
+      case 'H': return `Hitting improves a weak ${total} more often than it busts, and the dealer's ${upLabel} is too strong to stand against.`;
+      case 'D': return `Doubling maximizes value on a strong ${total} against a dealer ${upLabel} — one more card and the odds favor you enough to bet double.`;
+      case 'P': return `Splitting turns a poor combined hand into two independent hands, each with a fresh chance against the dealer's ${upLabel}.`;
+      case 'R': return `The hand is bad enough, and the dealer's ${upLabel} strong enough, that giving up half your bet beats playing it out.`;
+      default: return '';
+    }
+  },
+
+  render(results, best, bookCode, comp, upGroup, s17, total, softAces){
+    const body = document.getElementById('advisorBody');
+    const {dist} = EV.dealerFullDistribution(upGroup, comp, s17);
+    const rows = results.map(r => {
+      const cls = r.code === best.code ? 'ev-row best' : 'ev-row';
+      const valCls = r.ev >= 0 ? 'pos' : 'neg';
+      const winPctCls = r.code === best.code ? 'win-pct pulse' : 'win-pct';
+      const winPct = (r.outcome.win * 100).toFixed(1);
+      return `<div class="${cls}"><span>${ACTION_LABEL[r.code]}</span><span class="${winPctCls}">${winPct}% win</span><span class="ev-val ${valCls}">${r.ev>=0?'+':''}${r.ev.toFixed(3)} EV</span></div>`;
+    }).join('');
+
+    let deviation = '';
+    if (bookCode && bookCode !== best.code){
+      const tenDensityLive = comp[9] / comp.reduce((a,b)=>a+b,0);
+      const freshComp = freshComposition(Rules.decks);
+      const tenDensityFresh = freshComp[9] / freshComp.reduce((a,b)=>a+b,0);
+      const diff = tenDensityLive - tenDensityFresh;
+      let reason;
+      if (Math.abs(diff) > 0.01){
+        reason = `the shoe is currently ${diff>0?'richer':'leaner'} in ten-value cards than a fresh shoe (${(tenDensityLive*100).toFixed(1)}% vs ${(tenDensityFresh*100).toFixed(1)}%), which shifts the exact math`;
+      } else {
+        reason = `the exact composition of the remaining cards is razor-close between ${ACTION_LABEL[bookCode]} and ${ACTION_LABEL[best.code]} for this specific hand`;
+      }
+      deviation = `<div class="deviation">⚠ Exact EV says <b>${ACTION_LABEL[best.code]}</b>, deviating from the basic-strategy book answer of <b>${ACTION_LABEL[bookCode]}</b> — ${reason}.</div>`;
+    }
+
+    // Dynamically generated from the actual hand/upcard/count/decision, per
+    // the required template: "{total} vs dealer {up-card}, count {±n} -> {action}."
+    const upLabel = upGroup === 0 ? 'A' : groupBaseValue(upGroup);
+    const rc = CountState.running;
+    const rcStr = (rc > 0 ? '+' : '') + rc;
+    const templateLine = `${total} vs dealer ${upLabel}, count ${rcStr} → ${ACTION_LABEL[best.code]}.`;
+    const unseen = comp.reduce((a,b)=>a+b, 0);
+
+    body.innerHTML = `
+      <div class="ev-list">${rows}</div>
+      <div class="bs-line">Basic strategy book answer: <b>${bookCode ? ACTION_LABEL[bookCode] : '—'}</b></div>
+      ${deviation}
+      <div class="explain">${this.explanation(best.code, total, softAces, upGroup, dist)}</div>
+      <div class="template-line">${templateLine}</div>
+      <div class="count-note">Computed exactly from the ${unseen} unseen cards left in the shoe — the same information the count (${rcStr}) approximates, not a second opinion.</div>
+    `;
+  }
+};
+
+/* ---------------------------------------------------------------------------
+   UI wiring
+   --------------------------------------------------------------------------- */
+const UI = {
+  addChip(v){ Flow.startBet(v); },
+  init(){
+    Render.renderChipRack();
+    document.getElementById('clearBetBtn').addEventListener('click', () => Flow.clearBet());
+    document.getElementById('rebetBtn').addEventListener('click', () => Flow.rebet());
+    document.getElementById('dealBtn').addEventListener('click', () => { Sound.ensureCtx(); Flow.deal(); });
+    document.getElementById('suggestBetBtn').addEventListener('click', () => Flow.suggestBet());
+    document.getElementById('autoDealToggle').addEventListener('change', (e) => {
+      AutoDeal.enabled = e.target.checked;
+    });
+    document.getElementById('insYesBtn').addEventListener('click', () => Flow.insuranceDecision(true));
+    document.getElementById('insNoBtn').addEventListener('click', () => Flow.insuranceDecision(false));
+    document.querySelectorAll('#actionRow [data-action]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        Sound.ensureCtx(); // warm up audio inside this user-gesture handler
+        Flow.action(btn.dataset.action);
+      });
+    });
+    // Best Move: a permanent button, not a toggle — every click re-triggers
+    // a fresh reveal for whatever the current hand is right now. Closing is
+    // only ever done via the panel's own ✕.
+    document.getElementById('revealBtn').addEventListener('click', () => Advisor.reveal());
+    document.getElementById('panelCloseBtn').addEventListener('click', () => Advisor.close());
+    // Keyboard shortcut "B" does the same thing the button does — ignored
+    // while typing in a field.
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'b' && e.key !== 'B') return;
+      const tag = document.activeElement && document.activeElement.tagName;
+      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+      Advisor.reveal();
+    });
+    // Count is a momentary 2-second peek, not a persistent toggle.
+    document.getElementById('countPeekBtn').addEventListener('click', () => CountPeek.show());
+    // Mute toggle for the card-landing sound.
+    document.getElementById('muteBtn').addEventListener('click', (e) => {
+      Sound.muted = !Sound.muted;
+      Sound.ensureCtx();
+      e.target.textContent = Sound.muted ? '🔇' : '🔊';
+    });
+
+    // settings modal
+    const settingsModal = document.getElementById('settingsModal');
+    document.getElementById('settingsBtn').addEventListener('click', () => {
+      document.getElementById('optDecks').value = Rules.decks;
+      document.getElementById('optH17').checked = Rules.h17;
+      document.getElementById('optDAS').checked = Rules.das;
+      document.getElementById('optSurrender').checked = Rules.surrender;
+      document.getElementById('optPen').value = Rules.penetration;
+      document.getElementById('optPenVal').textContent = Rules.penetration;
+      document.getElementById('optBankroll').value = Rules.startBankroll;
+      settingsModal.classList.remove('hidden');
+    });
+    document.getElementById('optPen').addEventListener('input', (e) => {
+      document.getElementById('optPenVal').textContent = e.target.value;
+    });
+    document.getElementById('settingsCloseBtn').addEventListener('click', () => settingsModal.classList.add('hidden'));
+    document.getElementById('settingsApplyBtn').addEventListener('click', () => {
+      Rules.decks = Number(document.getElementById('optDecks').value);
+      Rules.h17 = document.getElementById('optH17').checked;
+      Rules.das = document.getElementById('optDAS').checked;
+      Rules.surrender = document.getElementById('optSurrender').checked;
+      Rules.penetration = Number(document.getElementById('optPen').value);
+      Rules.startBankroll = Number(document.getElementById('optBankroll').value);
+      document.querySelector('.brand small').textContent =
+        `${Rules.decks}-DECK · ${Rules.h17?'H17':'S17'} · ${Rules.das?'DAS':'NO DAS'} · ${Rules.surrender?'LATE SURRENDER':'NO SURRENDER'}`;
+      Game.shoe = new Shoe(Rules);
+      Game.shoe.shuffle();
+      Game.bankroll = Rules.startBankroll;
+      Game.hands = []; Game.pendingBet = 0; Game.phase = 'betting';
+      Game.dealerCards = [];
+      Strategy.table = null;
+      settingsModal.classList.add('hidden');
+      Render.clearResult();
+      Render.renderAll();
+      runSelfTest();
+    });
+
+    // stats modal
+    const statsModal = document.getElementById('statsModal');
+    document.getElementById('statsBtn').addEventListener('click', () => {
+      const grid = document.getElementById('statsGrid');
+      const edge = Stats.wagered > 0 ? (-Stats.netUnits / Stats.wagered * 100) : 0;
+      grid.innerHTML = `
+        <div><b>${Stats.hands}</b>Hands played</div>
+        <div><b>${Stats.wins}</b>Wins</div>
+        <div><b>${Stats.losses}</b>Losses</div>
+        <div><b>${Stats.pushes}</b>Pushes</div>
+        <div><b>${Stats.blackjacks}</b>Blackjacks</div>
+        <div><b>${Stats.netUnits>=0?'+':''}$${Stats.netUnits.toFixed(0)}</b>Net</div>
+        <div style="grid-column:1/-1;"><b>${edge.toFixed(2)}%</b>Realized house edge</div>
+      `;
+      statsModal.classList.remove('hidden');
+    });
+    document.getElementById('statsCloseBtn').addEventListener('click', () => statsModal.classList.add('hidden'));
+    document.getElementById('statsResetBtn').addEventListener('click', () => { Stats.reset(); document.getElementById('statsBtn').click(); });
+
+    Game.init();
+    Render.renderAll();
+  }
+};
+
+/* ---------------------------------------------------------------------------
+   SELF-TEST — verifies the generated basic-strategy table against a curated
+   set of textbook 6-deck S17 DAS late-surrender basic-strategy answers.
+   Runs once at startup (and after rule changes) and reports pass/fail.
+   --------------------------------------------------------------------------- */
+function runSelfTest(){
+  const testRules = {decks:6, h17:false, das:true, surrender:true, penetration:75, startBankroll:1000};
+  const t = Strategy.build(testRules);
+  const g = (label) => label==='A' ? 0 : (label==='T' ? 9 : Number(label)-1);
+  const cases = [
+    // [category, key, upLabel, expectedCode]
+    ['hard',16,'T','R'], ['hard',16,'2','S'], ['hard',12,'4','S'], ['hard',12,'2','H'],
+    ['hard',11,'A','H'], ['hard',11,'6','D'], ['hard',10,'T','H'], ['hard',9,'3','D'],
+    ['hard',17,'A','S'], ['hard',8,'6','H'], ['hard',15,'T','R'], ['hard',15,'A','H'],
+    ['soft',7,'2','S'], ['soft',7,'6','D'], ['soft',7,'9','H'], ['soft',6,'6','D'],
+    ['soft',9,'A','S'], ['soft',2,'6','D'],
+    ['pair',g('A'),'A','P'], ['pair',g('8'),'A','P'], ['pair',g('T'),'6','S'],
+    ['pair',g('5'),'6','D'], ['pair',g('9'),'7','S'], ['pair',g('9'),'6','P'],
+    ['pair',g('4'),'5','P'], ['pair',g('4'),'7','H'], ['pair',g('2'),'3','P']
+  ];
+  let pass = 0;
+  const fails = [];
+  cases.forEach(([cat,key,upLabel,expected]) => {
+    const up = g(upLabel);
+    const got = cat==='hard'?t.hard[key+'|'+up]:cat==='soft'?t.soft[key+'|'+up]:t.pair[key+'|'+up];
+    if (got === expected) pass++;
+    else fails.push(`${cat} ${key} vs ${upLabel}: expected ${expected}, got ${got}`);
+  });
+
+  // --- True-count arithmetic: nearest-0.5-deck rounding, floor of 0.5 decks,
+  // running-count / decks-remaining. Manually verified:
+  //   fresh 6-deck shoe (312 cards), RC 0            -> 312/52=6.000 decks -> TC 0
+  //   308 cards left (a 5,K,2,7 dealt), RC +1         -> 308/52=5.923 decks, rounds to 6.0 -> TC +1/6 ≈ +0.17
+  //   286 cards left (half a deck gone), RC +3        -> 286/52=5.500 decks exactly       -> TC +3/5.5 ≈ +0.55
+  //   10 cards left near the cut card, RC +2          -> 10/52=0.19 decks, floors to 0.5   -> TC +2/0.5 = +4
+  //   0 cards left (never divide by zero), RC +5      -> floors to 0.5 decks               -> TC +5/0.5 = +10
+  const countCases = [
+    [312, 0, 6.0, 0],
+    [308, 1, 6.0, 1/6],
+    [286, 3, 5.5, 3/5.5],
+    [10, 2, 0.5, 4],
+    [0, 5, 0.5, 10]
+  ];
+  let countPass = 0;
+  countCases.forEach(([left, rc, expDecks, expTC]) => {
+    const decks = decksRemainingRounded(left);
+    const tc = trueCount(rc, left);
+    const ok = Math.abs(decks - expDecks) < 1e-9 && Math.abs(tc - expTC) < 1e-9;
+    if (ok) countPass++;
+    else fails.push(`count: ${left} cards left, RC ${rc} -> expected decks=${expDecks} TC=${expTC.toFixed(3)}, got decks=${decks} TC=${tc.toFixed(3)}`);
+  });
+
+  // --- Bet-spread ramp: matches the spec's anchor points exactly
+  // (TC<=1 -> 1 unit, TC2 -> 2, TC3 -> 4, TC4 -> 7 (within the 6-8 range
+  // given), TC>=5 -> 10, and never above the configured 12-unit cap).
+  const betCases = [
+    [-2, 1], [0, 1], [1, 1], [1.5, 1], [2, 2], [3, 4], [4, 7], [5, 10], [8, 10]
+  ];
+  let betPass = 0;
+  betCases.forEach(([tc, expUnits]) => {
+    const got = recommendedBetUnits(tc);
+    if (got === expUnits) betPass++;
+    else fails.push(`bet-spread: TC ${tc} -> expected ${expUnits} units, got ${got}`);
+  });
+
+  const totalChecks = cases.length + countCases.length + betCases.length;
+  const totalPass = pass + countPass + betPass;
+  const el = document.getElementById('selftest');
+  if (fails.length === 0){
+    el.textContent = `✓ Strategy engine + true-count + bet-spread math verified against ${totalChecks} known answers (6D/S17/DAS/LS).`;
+    el.classList.remove('fail');
+  } else {
+    el.textContent = `✗ ${fails.length}/${totalChecks} self-test checks failed — see console.`;
+    el.classList.add('fail');
+    console.warn('Blackjack self-test failures:', fails);
+  }
+  console.log(`Blackjack self-test: ${totalPass}/${totalChecks} passed.`);
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  UI.init();
+  setTimeout(runSelfTest, 30);
+});
+
+/* ---------------------------------------------------------------------------
+   PWA — register the service worker (relative path, so this resolves
+   correctly under a sub-path deployment too) once the page has finished
+   loading. After the first successful load, sw.js precaches everything the
+   game needs and the whole thing works offline, and it becomes installable
+   to a phone home screen via "Add to Home Screen" / the browser's install
+   prompt. Safe to skip silently on browsers/contexts without SW support
+   (e.g. a file:// preview) or if registration fails for any reason.
+   --------------------------------------------------------------------------- */
+if ('serviceWorker' in navigator){
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch((err) => {
+      console.warn('Service worker registration failed:', err);
+    });
+  });
+}
+</script>
+</body>
+</html>
