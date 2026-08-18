@@ -230,14 +230,31 @@ body::before{
   10%,90%{transform:translateX(-2px)}20%,80%{transform:translateX(4px)}
   30%,50%,70%{transform:translateX(-9px)}40%,60%{transform:translateX(9px)}
 }
-/* Pulsing highlight for the recommended action button — glow + a slight
-   scale pulse together, so it reads as an unmistakable "blink" rather than
-   a subtle glow easy to miss next to the game's other gold accents. */
+/* Pulsing highlight for the recommended action button — big glow + a
+   pronounced scale pulse + a brightness/saturation flash + a color shift
+   to electric cyan at the peak, together, so it reads as unmistakably
+   different from the button's resting state, from a hover state, from a
+   disabled button, and from the game's other gold-only glow accents
+   elsewhere (glowPulse, the gold hover tint). Every property here
+   (box-shadow, border-color, filter, transform) is one that animates
+   smoothly cross-browser — deliberately NOT animating `background` directly,
+   since interpolating between two different CSS gradients is unreliable
+   and can visually "snap" instead of pulse. */
 @keyframes btnPulse{
-  0%,100%{box-shadow:0 0 0 rgba(212,175,55,0);border-color:var(--panel-border);transform:scale(1);}
-  50%{box-shadow:0 0 0 5px rgba(212,175,55,.4), 0 0 28px 9px rgba(212,175,55,.8);border-color:var(--gold-light);transform:scale(1.06);}
+  0%,100%{
+    box-shadow:0 0 0 rgba(212,175,55,0);
+    border-color:var(--panel-border);
+    filter:brightness(1) saturate(1);
+    transform:scale(1);
+  }
+  50%{
+    box-shadow:0 0 0 8px rgba(34,224,255,.55), 0 0 44px 16px rgba(34,224,255,.95);
+    border-color:#22e0ff;
+    filter:brightness(1.6) saturate(1.4);
+    transform:scale(1.14);
+  }
 }
-.btn.reveal-highlight{animation:btnPulse .9s ease-in-out infinite;position:relative;z-index:2;}
+.btn.reveal-highlight{animation:btnPulse 1s ease-in-out infinite;position:relative;z-index:5;}
 @keyframes textBlink{
   0%,100%{opacity:1;}
   50%{opacity:.35;}
@@ -383,9 +400,43 @@ body::before{
   *{animation-duration:.001ms !important;animation-iteration-count:1 !important;transition-duration:.001ms !important;}
   .side-panel{transition-duration:.001ms !important;}
 }
+
+/* ============================================================
+   LOADING SCREEN — shown immediately on page load (before any
+   game JS has run), faded out once UI.init() has produced the
+   first real render. Uses the same felt/gold palette as the
+   table itself so there is no jarring switch in look.
+   ============================================================ */
+#loadingScreen{
+  position:fixed;inset:0;z-index:9999;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:22px;
+  background:
+    radial-gradient(ellipse at 50% 40%, var(--felt-light) 0%, var(--felt) 55%, var(--felt-dark) 100%);
+  transition:opacity .5s ease;
+}
+#loadingScreen.fade-out{opacity:0;pointer-events:none;}
+.loading-logo{
+  font-family:var(--serif);font-size:1.8rem;letter-spacing:.05em;color:var(--gold-light);
+  text-shadow:0 2px 10px rgba(0,0,0,.6);text-align:center;
+}
+.loading-logo small{display:block;font-family:var(--sans);font-size:.65rem;letter-spacing:.3em;color:var(--gold-dim);font-weight:600;margin-top:6px;}
+.loading-spinner{
+  width:46px;height:46px;border-radius:50%;
+  border:3px solid var(--gold-dim);
+  border-top-color:var(--gold-light);
+  animation:loadingSpin .9s linear infinite;
+}
+@keyframes loadingSpin{ to{ transform:rotate(360deg); } }
+@media (prefers-reduced-motion: reduce){
+  .loading-spinner{animation:none;}
+}
 </style>
 </head>
 <body>
+<div id="loadingScreen">
+  <div class="loading-logo">♠ Vegas Strip Blackjack<small>SHUFFLING THE SHOE&hellip;</small></div>
+  <div class="loading-spinner"></div>
+</div>
 <div class="wrap">
 
   <div class="topbar">
@@ -399,9 +450,8 @@ body::before{
       <button class="mini-toggle" id="countPeekBtn" title="Peek at the count for 2 seconds">👁 Count</button>
       <span class="count-badge hidden" id="countBadge">RC 0 / TC 0.0</span>
       <div class="topbar-buttons">
-        <button class="icon-btn" id="muteBtn" title="Mute card sounds">🔊</button>
         <button class="icon-btn" id="statsBtn">📊 Stats</button>
-        <button class="icon-btn" id="settingsBtn">⚙ Settings</button>
+        <button class="icon-btn" id="settingsBtn" title="Settings &amp; preferences">☰</button>
       </div>
     </div>
   </div>
@@ -490,6 +540,11 @@ body::before{
 <!-- SETTINGS MODAL -->
 <div class="modal-overlay hidden" id="settingsModal">
   <div class="modal">
+    <h2>Preferences</h2>
+    <div class="field-row"><span>Sound</span><input type="checkbox" id="optSound" checked></div>
+    <div class="field-row"><span>Insurance offer</span><input type="checkbox" id="optInsurance" checked></div>
+    <div class="field-row"><span>Hide hand totals</span><input type="checkbox" id="optHideTotals"></div>
+
     <h2>Table Rules</h2>
     <div class="field-row"><span>Number of decks</span>
       <select id="optDecks"><option>1</option><option>2</option><option>4</option><option selected>6</option><option>8</option></select>
@@ -497,6 +552,7 @@ body::before{
     <div class="field-row"><span>Dealer hits soft 17 (H17)</span><input type="checkbox" id="optH17"></div>
     <div class="field-row"><span>Double after split (DAS)</span><input type="checkbox" id="optDAS" checked></div>
     <div class="field-row"><span>Late surrender allowed</span><input type="checkbox" id="optSurrender" checked></div>
+    <div class="field-row"><span>Allow hitting split Aces</span><input type="checkbox" id="optHitSplitAces"></div>
     <div class="field-row"><span>Penetration (<span id="optPenVal">75</span>%)</span>
       <input type="range" id="optPen" min="50" max="90" value="75">
     </div>
@@ -834,36 +890,35 @@ const EV = (function(){
   // (ignoring the small correlation between the two hands' card removal).
   // The bias from this simplification is on the order of 0.001-0.005 units
   // and does not change the recommended action in practice.
-  // Aces: exactly one card, no further action, no blackjack bonus on 21.
-  function splitEV(pairGroup, upGroup, comp, s17, das){
+  // Aces: by default (hitAces falsy) exactly one card, forced stand, no
+  // further hit/double — matches standard casino split-aces rules. When
+  // hitAces is true (the "Allow hitting split Aces" setting), an ace hand
+  // is treated exactly like any other split hand: normal hit/double
+  // recursion via bestEV/doubleEV.
+  function splitEV(pairGroup, upGroup, comp, s17, das, hitAces){
     const remaining = comp.reduce((a,b)=>a+b, 0);
     if (remaining === 0) return -2;
     let sum = 0;
-    const baseVal = groupBaseValue(pairGroup);
+    const isAces = pairGroup === 0;
+    const baseVal = isAces ? 11 : groupBaseValue(pairGroup);
+    const forcedStand = isAces && !hitAces;
     for (let g = 0; g < 10; g++){
       const c = comp[g];
       if (!c) continue;
       const p = c / remaining;
       let outcome;
-      if (pairGroup === 0){
-        // split aces: one card, forced stand, no hit, no double
-        let nt = 11 + groupBaseValue(g);
-        let ns = 1 + (g === 0 ? 1 : 0);
-        while (nt > 21 && ns > 0){ nt -= 10; ns -= 1; }
-        if (nt > 21) outcome = -1;
-        else { comp[g]--; outcome = standEV(nt, upGroup, comp, s17); comp[g]++; }
+      let nt = baseVal + groupBaseValue(g);
+      let ns = (isAces ? 1 : 0) + (g === 0 ? 1 : 0);
+      while (nt > 21 && ns > 0){ nt -= 10; ns -= 1; }
+      if (nt > 21) outcome = -1;
+      else if (forcedStand){
+        comp[g]--; outcome = standEV(nt, upGroup, comp, s17); comp[g]++;
       } else {
-        let nt = baseVal + groupBaseValue(g);
-        let ns = (g === 0 ? 1 : 0);
-        while (nt > 21 && ns > 0){ nt -= 10; ns -= 1; }
-        if (nt > 21) outcome = -1;
-        else {
-          comp[g]--;
-          const s = bestEV(nt, ns, upGroup, comp, s17);
-          const d = das ? doubleEV(nt, ns, upGroup, comp, s17) : -Infinity;
-          outcome = Math.max(s, d);
-          comp[g]++;
-        }
+        comp[g]--;
+        const s = bestEV(nt, ns, upGroup, comp, s17);
+        const d = das ? doubleEV(nt, ns, upGroup, comp, s17) : -Infinity;
+        outcome = Math.max(s, d);
+        comp[g]++;
       }
       sum += p * outcome;
     }
@@ -964,37 +1019,34 @@ const EV = (function(){
     return {win, push, lose};
   }
 
-  function splitOutcome(pairGroup, upGroup, comp, s17, das){
+  function splitOutcome(pairGroup, upGroup, comp, s17, das, hitAces){
     // Same independent-hand approximation as splitEV (see note there):
-    // the reported win% is the average per-hand win probability.
+    // the reported win% is the average per-hand win probability. Mirrors
+    // splitEV's forcedStand branching exactly, so the two stay in sync.
     const remaining = comp.reduce((a,b)=>a+b, 0);
     if (remaining === 0) return {win:0, push:0, lose:1};
     let win=0, push=0, lose=0;
-    const baseVal = groupBaseValue(pairGroup);
+    const isAces = pairGroup === 0;
+    const baseVal = isAces ? 11 : groupBaseValue(pairGroup);
+    const forcedStand = isAces && !hitAces;
     for (let g = 0; g < 10; g++){
       const c = comp[g];
       if (!c) continue;
       const p = c / remaining;
       let outcome;
-      if (pairGroup === 0){
-        let nt = 11 + groupBaseValue(g);
-        let ns = 1 + (g === 0 ? 1 : 0);
-        while (nt > 21 && ns > 0){ nt -= 10; ns -= 1; }
-        if (nt > 21) outcome = {win:0, push:0, lose:1};
-        else { comp[g]--; outcome = standOutcome(nt, upGroup, comp, s17); comp[g]++; }
+      let nt = baseVal + groupBaseValue(g);
+      let ns = (isAces ? 1 : 0) + (g === 0 ? 1 : 0);
+      while (nt > 21 && ns > 0){ nt -= 10; ns -= 1; }
+      if (nt > 21) outcome = {win:0, push:0, lose:1};
+      else if (forcedStand){
+        comp[g]--; outcome = standOutcome(nt, upGroup, comp, s17); comp[g]++;
       } else {
-        let nt = baseVal + groupBaseValue(g);
-        let ns = (g === 0 ? 1 : 0);
-        while (nt > 21 && ns > 0){ nt -= 10; ns -= 1; }
-        if (nt > 21) outcome = {win:0, push:0, lose:1};
-        else {
-          comp[g]--;
-          // same double-vs-stand decision splitEV makes, kept in sync
-          const sEv = bestEV(nt, ns, upGroup, comp, s17);
-          const dEv = das ? doubleEV(nt, ns, upGroup, comp, s17) : -Infinity;
-          outcome = (das && dEv > sEv) ? doubleOutcome(nt, ns, upGroup, comp, s17) : bestOutcome(nt, ns, upGroup, comp, s17);
-          comp[g]++;
-        }
+        comp[g]--;
+        // same double-vs-stand decision splitEV makes, kept in sync
+        const sEv = bestEV(nt, ns, upGroup, comp, s17);
+        const dEv = das ? doubleEV(nt, ns, upGroup, comp, s17) : -Infinity;
+        outcome = (das && dEv > sEv) ? doubleOutcome(nt, ns, upGroup, comp, s17) : bestOutcome(nt, ns, upGroup, comp, s17);
+        comp[g]++;
       }
       win += p*outcome.win; push += p*outcome.push; lose += p*outcome.lose;
     }
@@ -1025,10 +1077,11 @@ const Strategy = {
     // Deck count / S17-H17 / DAS / surrender-availability change the optimal
     // table; penetration and bankroll don't, so they're excluded from the
     // cache key to avoid needless recomputation.
-    const key = rules.decks + '|' + rules.h17 + '|' + rules.das + '|' + rules.surrender;
+    const key = rules.decks + '|' + rules.h17 + '|' + rules.das + '|' + rules.surrender + '|' + rules.hitSplitAces;
     if (this.rulesKey === key && this.table) return this.table;
     const s17 = !rules.h17;
     const das = rules.das;
+    const hitAces = rules.hitSplitAces;
     const fresh = () => freshComposition(rules.decks);
     const hard = {}, soft = {}, pair = {};
 
@@ -1084,7 +1137,7 @@ const Strategy = {
           S: EV.standEV(total, up, c, s17),
           H: EV.hitEV(total, softAces, up, c, s17),
           D: EV.doubleEV(total, softAces, up, c, s17),
-          P: EV.splitEV(g, up, c, s17, das)
+          P: EV.splitEV(g, up, c, s17, das, hitAces)
         };
         pair[g+'|'+up] = argmax(evs);
       }
@@ -1116,7 +1169,8 @@ const ACTION_TO_DATA = {S:'stand', H:'hit', D:'double', P:'split', R:'surrender'
    RULES / GAME STATE
    --------------------------------------------------------------------------- */
 const Rules = {
-  decks: 6, h17: false, das: true, surrender: true, penetration: 75, startBankroll: 1000
+  decks: 6, h17: false, das: true, surrender: true, penetration: 75, startBankroll: 1000,
+  hitSplitAces: false, offerInsurance: true, hideTotals: false
 };
 
 const CHIP_VALUES = [5, 25, 100, 500];
@@ -1408,19 +1462,25 @@ function makeCubicBezier(x1, y1, x2, y2){
   };
 }
 const dealEase = makeCubicBezier(0.16, 1, 0.3, 1);
+// How long each individual card's own flight animation takes (see
+// Render.dealCardArc).
+const CARD_FLIGHT_MS = 900;
 // Shared pacing for ALL card-dealing motion — initial deal, hits, splits,
 // and dealer draws all read from this one place, so the whole game feels
-// consistent rather than some moments fast and others slow. This is the
-// delay between successive cards STARTING to fly (see CARD_FLIGHT_MS below
-// for how long each individual card's own flight takes); reduced-motion
-// keeps things fast since the arc itself is skipped entirely there.
-function cardDealDelay(){ return prefersReducedMotion() ? 70 : 650; }
-// How long each individual card's own flight animation takes (see
-// Render.dealCardArc). Deliberately longer than cardDealDelay() so a new
-// card leaves the shoe while the previous one is still gently settling —
-// the same overlapping cascade a real dealer's hands produce, not a rigid
-// one-at-a-time queue.
-const CARD_FLIGHT_MS = 900;
+// consistent rather than some moments fast and others slow.
+//
+// Every call site (deal()'s DEAL_DELAY, doSplit()'s DELAY, and the
+// dealer-turn step()) uses this as a `sleep`/`setTimeout` gap that's
+// awaited BEFORE dealing the next card — i.e. measured from when the
+// PREVIOUS card started flying, not from when it landed. To get an actual
+// ~750ms pause AFTER a card lands and BEFORE the next one starts, this
+// therefore has to cover the full CARD_FLIGHT_MS flight plus the pause on
+// top of it (900ms flight + 750ms pause = 1650ms between successive
+// dealCardTo() calls) — using 750ms alone here would still leave cards
+// overlapping (starting ~150ms before the previous one even lands).
+// Reduced-motion keeps things fast since the arc itself is skipped there.
+const CARD_LANDING_PAUSE_MS = 750;
+function cardDealDelay(){ return prefersReducedMotion() ? 70 : CARD_FLIGHT_MS + CARD_LANDING_PAUSE_MS; }
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 /* ---------------------------------------------------------------------------
@@ -1582,7 +1642,7 @@ const Render = {
     } else {
       this.renderDealer();
     }
-    document.getElementById('dealerTotal').textContent = HandUtil.display(Game.dealerCards);
+    document.getElementById('dealerTotal').textContent = Rules.hideTotals ? '•' : HandUtil.display(Game.dealerCards);
   },
   renderDealer(){
     const el = document.getElementById('dealerCards');
@@ -1593,7 +1653,7 @@ const Render = {
     });
     const totalEl = document.getElementById('dealerTotal');
     if (Game.dealerHoleRevealed || Game.dealerCards.length === 0){
-      totalEl.textContent = Game.dealerCards.length ? HandUtil.display(Game.dealerCards) : ' ';
+      totalEl.textContent = Game.dealerCards.length ? (Rules.hideTotals ? '•' : HandUtil.display(Game.dealerCards)) : ' ';
     } else if (Game.dealerCards.length){
       totalEl.textContent = `showing ${groupBaseValue(Game.dealerCards[0].group) === 11 ? 'A' : groupBaseValue(Game.dealerCards[0].group)}`;
     } else {
@@ -1619,11 +1679,12 @@ const Render = {
       g.appendChild(cardsEl);
       const totalEl = document.createElement('div');
       totalEl.className = 'hand-total';
-      let label = HandUtil.display(h.cards);
+      let label = Rules.hideTotals ? '•' : HandUtil.display(h.cards);
       if (h.status === 'bust') label += ' — BUST';
       else if (h.status === 'blackjack') label = 'BLACKJACK!';
       else if (h.status === 'surrendered') label += ' — SURRENDERED';
       else if (h.status === 'doubled') label += ' (doubled)';
+      else if (h.status === 'pending-split') label += ' — waiting…';
       totalEl.textContent = `$${h.bet} · ${label}`;
       g.appendChild(totalEl);
       if (h._fx === 'win') g.classList.add('is-win');
@@ -1786,13 +1847,48 @@ function dealCardTo(arr, visible){
   return card;
 }
 
+// Bet-suggestion note (below the bet row): shown by Flow.suggestBet() and
+// by AutoDeal's fallback-amount warning. Click-outside-to-close is armed
+// only while it's visible, and always disarmed first on show() so repeated
+// opens never stack listeners.
+const BetSuggestion = {
+  _outsideClickHandler: null,
+  show(text, warn){
+    const el = document.getElementById('betSuggestion');
+    el.textContent = text;
+    el.classList.remove('hidden');
+    el.classList.toggle('warn', !!warn);
+    this._arm();
+  },
+  hide(){
+    document.getElementById('betSuggestion').classList.add('hidden');
+    this._disarm();
+  },
+  _arm(){
+    this._disarm();
+    const el = document.getElementById('betSuggestion');
+    const trigger = document.getElementById('suggestBetBtn');
+    this._outsideClickHandler = (e) => {
+      if (el.contains(e.target) || trigger.contains(e.target)) return;
+      this.hide();
+    };
+    document.addEventListener('click', this._outsideClickHandler);
+  },
+  _disarm(){
+    if (this._outsideClickHandler){
+      document.removeEventListener('click', this._outsideClickHandler);
+      this._outsideClickHandler = null;
+    }
+  }
+};
+
 const Flow = {
   startBet(value){
     if (Game.phase !== 'betting') return;
     if (Game.bankroll - Game.pendingBet < value) return;
     Game.pendingBet += value;
     Game.betChips.push(value);
-    document.getElementById('betSuggestion').classList.add('hidden');
+    BetSuggestion.hide();
     Render.renderAll();
   },
   clearBet(){
@@ -1814,7 +1910,6 @@ const Flow = {
   // advantage-play model this uses — display only, does not place the bet.
   suggestBet(){
     if (Game.phase !== 'betting') return;
-    const el = document.getElementById('betSuggestion');
     const tc = trueCount(CountState.running, Game.shoe.remainingCount());
     const tcStr = (tc >= 0 ? '+' : '') + tc.toFixed(1);
     const units = recommendedBetUnits(tc);
@@ -1827,8 +1922,7 @@ const Flow = {
     } else {
       text = `True count ${tcStr} → estimated edge +${edgePct.toFixed(1)}%. Recommended bet: ${units} unit${units>1?'s':''} ($${amount}).`;
     }
-    el.textContent = text;
-    el.classList.remove('hidden', 'warn');
+    BetSuggestion.show(text, false);
   },
   // Deals the opening hand as a natural, human-paced sequence rather than
   // all at once: player card 1 -> dealer up-card -> player card 2 -> dealer
@@ -1869,7 +1963,7 @@ const Flow = {
     Render.renderAll();
 
     const upGroup = Game.dealerCards[0].group;
-    if (upGroup === 0){
+    if (upGroup === 0 && Rules.offerInsurance){
       Game.phase = 'insurance';
       Render.renderAll();
       return;
@@ -1900,10 +1994,17 @@ const Flow = {
     // no dealer blackjack: insurance bet (if any) is lost, already deducted
     const h = Game.hands[0];
     if (HandUtil.isBlackjack(h.cards)){
+      // Player has a natural 21 and the dealer has already been confirmed
+      // (via peek, when up=A/10) or is structurally guaranteed (up=2-9,
+      // where a natural blackjack is impossible) NOT to also have one — so
+      // this hand is unbeatable. The dealer's hole card is revealed for
+      // display only; needsPlay=false means the dealer does NOT draw
+      // further cards to reach 17+, since no two-card dealer hand can ever
+      // beat (only push, already ruled out) a natural 21.
       h.status = 'blackjack';
       Game.phase = 'dealer-turn';
       Render.renderAll();
-      this.revealAndPlayDealer(true);
+      this.revealAndPlayDealer(false);
       return;
     }
     Game.phase = 'player-turn';
@@ -1958,6 +2059,13 @@ const Flow = {
     }
     Render.renderAll();
   },
+  // Splits the active hand into two. Real casino procedure deals and plays
+  // split hands strictly ONE AT A TIME: the first hand gets its second card
+  // and is played to completion (hit/stand/double, however many times
+  // needed) before the second hand receives ANY card or becomes actionable
+  // — never both dealt simultaneously. handB starts life as 'pending-split'
+  // (only its original single card, no second card yet, not actionable)
+  // until nextHandOrDealer() reaches it once handA is fully resolved.
   async doSplit(h){
     Game.bankroll -= h.bet;
     const c1 = h.cards[0], c2 = h.cards[1];
@@ -1966,30 +2074,41 @@ const Flow = {
     const handB = Game.newHand([c2], h.bet);
     handA.fromSplit = true; handB.fromSplit = true;
     handA.isSplitAces = isAces; handB.isSplitAces = isAces;
+    handB.status = 'pending-split';
     const idx = Game.activeHandIndex;
     Game.hands.splice(idx, 1, handA, handB);
+    Game.activeHandIndex = idx; // handA
+    await this.dealSecondSplitCard(idx);
+  },
+  // Deals the second card to a hand that just became the active split hand
+  // (either the first hand right after doSplit(), or a later hand that was
+  // sitting 'pending-split' until now). For split aces under the standard
+  // one-card rule (Rules.hitSplitAces off, the default), the hand then
+  // auto-resolves exactly as before; otherwise it's left 'active' so the
+  // player can hit/stand/double it normally, same as any other split hand.
+  async dealSecondSplitCard(idx){
+    const h = Game.hands[idx];
+    h.status = 'active';
     Render.renderAll();
-    const DELAY = cardDealDelay(); // shared pacing — see cardDealDelay()
-    await sleep(DELAY);
-    dealCardTo(handA.cards, true);
-    Render.renderAll();
-    await sleep(DELAY);
-    dealCardTo(handB.cards, true);
-    if (isAces){
-      handA.status = HandUtil.isBust(handA.cards) ? 'bust' : 'stood';
-      handB.status = HandUtil.isBust(handB.cards) ? 'bust' : 'stood';
+    await sleep(cardDealDelay());
+    dealCardTo(h.cards, true);
+    if (h.isSplitAces && !Rules.hitSplitAces){
+      h.status = HandUtil.isBust(h.cards) ? 'bust' : 'stood';
     }
-    Game.activeHandIndex = idx;
     Render.renderAll();
-    if (Game.hands[Game.activeHandIndex].status !== 'active') this.nextHandOrDealer();
+    if (h.status !== 'active') this.nextHandOrDealer();
   },
   nextHandOrDealer(){
     Advisor.close(); // any open recommendation is for the hand that just finished acting
     let i = Game.activeHandIndex + 1;
-    while (i < Game.hands.length && Game.hands[i].status !== 'active') i++;
+    while (i < Game.hands.length && Game.hands[i].status !== 'active' && Game.hands[i].status !== 'pending-split') i++;
     if (i < Game.hands.length){
       Game.activeHandIndex = i;
-      Render.renderAll();
+      if (Game.hands[i].status === 'pending-split'){
+        this.dealSecondSplitCard(i);
+      } else {
+        Render.renderAll();
+      }
       return;
     }
     Game.activeHandIndex = -1;
@@ -2126,10 +2245,7 @@ const AutoDeal = {
     Game.pendingBet = amount;
     Game.betChips = [amount];
     if (note){
-      const el = document.getElementById('betSuggestion');
-      el.textContent = note;
-      el.classList.remove('hidden');
-      el.classList.add('warn');
+      BetSuggestion.show(note, true);
     }
     Render.renderAll();
     Flow.deal();
@@ -2169,6 +2285,29 @@ const AutoDeal = {
    --------------------------------------------------------------------------- */
 const Advisor = {
   open: false,
+  _outsideClickHandler: null,
+
+  // Closes the panel on any click outside it (and outside its own trigger
+  // button, so the click that opened it doesn't immediately close it — a
+  // listener added during an event's own dispatch never fires for that
+  // same event, but the trigger is still excluded for belt-and-braces
+  // clarity). Always disarms first so repeated opens never stack listeners.
+  armOutsideClickClose(){
+    this.disarmOutsideClickClose();
+    const panel = document.getElementById('sidePanel');
+    const trigger = document.getElementById('showOddsBtn');
+    this._outsideClickHandler = (e) => {
+      if (panel.contains(e.target) || trigger.contains(e.target)) return;
+      this.close();
+    };
+    document.addEventListener('click', this._outsideClickHandler);
+  },
+  disarmOutsideClickClose(){
+    if (this._outsideClickHandler){
+      document.removeEventListener('click', this._outsideClickHandler);
+      this._outsideClickHandler = null;
+    }
+  },
 
   // Shared computation, always recalculated fresh from Game's CURRENT
   // state — never cached. Returns null outside player-turn (nothing to
@@ -2190,7 +2329,7 @@ const Advisor = {
     let pairGroup = null;
     if (legal.split){
       pairGroup = h.cards[0].group;
-      results.push({code:'P', ev: EV.splitEV(pairGroup, upGroup, comp, s17, Rules.das), outcome: EV.splitOutcome(pairGroup, upGroup, comp, s17, Rules.das)});
+      results.push({code:'P', ev: EV.splitEV(pairGroup, upGroup, comp, s17, Rules.das, Rules.hitSplitAces), outcome: EV.splitOutcome(pairGroup, upGroup, comp, s17, Rules.das, Rules.hitSplitAces)});
     }
     results.sort((a,b) => b.ev - a.ev);
     const best = results[0];
@@ -2244,10 +2383,12 @@ const Advisor = {
     document.getElementById('sidePanel').classList.add('open');
     this.highlightButton(data.best.code);
     this.render(data.results, data.best, data.bookCode, data.comp, data.upGroup, data.s17, data.total, data.softAces);
+    this.armOutsideClickClose();
   },
 
   close(){
     this.open = false;
+    this.disarmOutsideClickClose();
     document.getElementById('showOddsBtn').classList.remove('open');
     document.getElementById('sidePanel').classList.remove('open');
     document.querySelectorAll('#actionRow [data-action]').forEach(b => b.classList.remove('reveal-highlight'));
@@ -2351,24 +2492,36 @@ const UI = {
     });
     // Count is a momentary 2-second peek, not a persistent toggle.
     document.getElementById('countPeekBtn').addEventListener('click', () => CountPeek.show());
-    // Mute toggle for the card-landing sound.
-    document.getElementById('muteBtn').addEventListener('click', (e) => {
-      Sound.muted = !Sound.muted;
-      Sound.ensureCtx();
-      e.target.textContent = Sound.muted ? '🔇' : '🔊';
-    });
-
-    // settings modal
+    // settings modal (hamburger menu in the top-right corner). "Preferences"
+    // fields (sound / insurance offer / hide totals) are pure display/flow
+    // toggles with no effect on the EV math, so they apply live on change —
+    // no Apply button, no reshuffle. "Table Rules" fields change the shoe
+    // composition or the strategy table, so they stay Apply-gated below.
     const settingsModal = document.getElementById('settingsModal');
     document.getElementById('settingsBtn').addEventListener('click', () => {
+      document.getElementById('optSound').checked = !Sound.muted;
+      document.getElementById('optInsurance').checked = Rules.offerInsurance;
+      document.getElementById('optHideTotals').checked = Rules.hideTotals;
       document.getElementById('optDecks').value = Rules.decks;
       document.getElementById('optH17').checked = Rules.h17;
       document.getElementById('optDAS').checked = Rules.das;
       document.getElementById('optSurrender').checked = Rules.surrender;
+      document.getElementById('optHitSplitAces').checked = Rules.hitSplitAces;
       document.getElementById('optPen').value = Rules.penetration;
       document.getElementById('optPenVal').textContent = Rules.penetration;
       document.getElementById('optBankroll').value = Rules.startBankroll;
       settingsModal.classList.remove('hidden');
+    });
+    document.getElementById('optSound').addEventListener('change', (e) => {
+      Sound.muted = !e.target.checked;
+      Sound.ensureCtx();
+    });
+    document.getElementById('optInsurance').addEventListener('change', (e) => {
+      Rules.offerInsurance = e.target.checked;
+    });
+    document.getElementById('optHideTotals').addEventListener('change', (e) => {
+      Rules.hideTotals = e.target.checked;
+      Render.renderAll();
     });
     document.getElementById('optPen').addEventListener('input', (e) => {
       document.getElementById('optPenVal').textContent = e.target.value;
@@ -2379,6 +2532,7 @@ const UI = {
       Rules.h17 = document.getElementById('optH17').checked;
       Rules.das = document.getElementById('optDAS').checked;
       Rules.surrender = document.getElementById('optSurrender').checked;
+      Rules.hitSplitAces = document.getElementById('optHitSplitAces').checked;
       Rules.penetration = Number(document.getElementById('optPen').value);
       Rules.startBankroll = Number(document.getElementById('optBankroll').value);
       document.querySelector('.brand small').textContent =
@@ -2501,6 +2655,14 @@ function runSelfTest(){
 document.addEventListener('DOMContentLoaded', () => {
   UI.init();
   setTimeout(runSelfTest, 30);
+  // Keep the loading screen up for a minimum stretch so a fast load doesn't
+  // flash it on and off instantly, then fade it out smoothly once the felt
+  // table (built by UI.init() above) is actually ready to look at.
+  const loadingScreen = document.getElementById('loadingScreen');
+  setTimeout(() => {
+    loadingScreen.classList.add('fade-out');
+    loadingScreen.addEventListener('transitionend', () => loadingScreen.remove(), {once:true});
+  }, 400);
 });
 
 /* ---------------------------------------------------------------------------
