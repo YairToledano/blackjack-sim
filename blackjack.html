@@ -464,6 +464,23 @@ body::before{
 @media (prefers-reduced-motion: reduce){
   .loading-spinner{animation:none;}
 }
+
+/* Small, unobtrusive toast telling the player a new version of the game
+   has just taken over in the background (see the service-worker update
+   flow near the bottom of this file) — tap it to reload and start using
+   it immediately, instead of it silently waiting for the next launch. */
+#swUpdateToast{
+  position:fixed;left:50%;bottom:16px;z-index:10000;
+  transform:translateX(-50%) translateY(16px);
+  background:rgba(5,18,12,.94);border:1px solid var(--gold);border-radius:999px;
+  color:var(--gold-light);font-family:var(--sans);font-size:.78rem;font-weight:600;
+  padding:9px 18px;cursor:pointer;white-space:nowrap;user-select:none;
+  box-shadow:0 6px 20px rgba(0,0,0,.5);
+  opacity:0;pointer-events:none;
+  transition:opacity .3s ease, transform .3s ease;
+}
+#swUpdateToast.show{opacity:1;transform:translateX(-50%) translateY(0);pointer-events:auto;}
+#swUpdateToast:hover{background:rgba(212,175,55,.18);}
 </style>
 </head>
 <body>
@@ -471,6 +488,7 @@ body::before{
   <div class="loading-logo">♠ Vegas Strip Blackjack<small>SHUFFLING THE SHOE&hellip;</small></div>
   <div class="loading-spinner"></div>
 </div>
+<div id="swUpdateToast" class="hidden" role="button" tabindex="0">🔄 Update available — tap to refresh</div>
 <div class="wrap">
 
   <div class="topbar">
@@ -2553,6 +2571,14 @@ const UI = {
     });
     // Count is a momentary 2-second peek, not a persistent toggle.
     document.getElementById('countPeekBtn').addEventListener('click', () => CountPeek.show());
+    // Service-worker update toast (see SWUpdateToast / the registration
+    // code near the bottom of this file) — tap or press Enter/Space to
+    // reload and pick up the version that just took over in the background.
+    const swToast = document.getElementById('swUpdateToast');
+    swToast.addEventListener('click', () => location.reload());
+    swToast.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); location.reload(); }
+    });
     // settings modal (hamburger menu in the top-right corner). "Preferences"
     // fields (sound / insurance offer / hide totals) are pure display/flow
     // toggles with no effect on the EV math, so they apply live on change —
@@ -2734,11 +2760,50 @@ document.addEventListener('DOMContentLoaded', () => {
    to a phone home screen via "Add to Home Screen" / the browser's install
    prompt. Safe to skip silently on browsers/contexts without SW support
    (e.g. a file:// preview) or if registration fails for any reason.
+
+   Update flow: when sw.js changes (its CACHE_NAME bumped), the browser
+   installs the new worker in the background. We tell it to activate right
+   away (postMessage SKIP_WAITING) rather than waiting for every open
+   tab/instance to fully close, then show a small toast once it actually
+   takes over — but only if THIS page load was already being served by a
+   previous worker, so a brand-new player's very first visit never sees an
+   "update available" prompt for something they never had.
    --------------------------------------------------------------------------- */
+const SWUpdateToast = {
+  show(){
+    const el = document.getElementById('swUpdateToast');
+    el.classList.remove('hidden');
+    void el.offsetWidth; // force reflow so the fade-in transition retriggers
+    el.classList.add('show');
+  }
+};
+
 if ('serviceWorker' in navigator){
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js').catch((err) => {
+    const hadControllerAtLoad = !!navigator.serviceWorker.controller;
+
+    navigator.serviceWorker.register('./sw.js').then((registration) => {
+      const trackInstalling = (worker) => {
+        if (!worker) return;
+        worker.addEventListener('statechange', () => {
+          if (worker.state === 'installed' && navigator.serviceWorker.controller){
+            // A new worker just finished installing while a DIFFERENT one
+            // is still active and controlling the page — a genuine update.
+            worker.postMessage({ type: 'SKIP_WAITING' });
+          }
+        });
+      };
+      if (registration.waiting) trackInstalling(registration.waiting);
+      registration.addEventListener('updatefound', () => trackInstalling(registration.installing));
+    }).catch((err) => {
       console.warn('Service worker registration failed:', err);
+    });
+
+    let handled = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (handled) return;
+      handled = true;
+      if (hadControllerAtLoad) SWUpdateToast.show();
     });
   });
 }

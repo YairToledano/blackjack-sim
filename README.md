@@ -2,6 +2,8 @@
 
 A casino-accurate Blackjack simulator with an exact expected-value decision engine, built as a single self-contained web app.
 
+[![Play Now](https://img.shields.io/badge/▶_Play_Now-Live_Demo-d4af37?style=for-the-badge&labelColor=0c3d24)](https://yairtoledano.github.io/blackjack-sim/blackjack.html)
+
 ## About
 
 This project is a Vegas Strip-style Blackjack game built to explore probability, card-counting theory (the Hi-Lo system), and exact expected-value computation in a real, playable form. It started as a faithful implementation of standard casino rules and grew into a small research tool: every "best move" recommendation is derived by recursively computing outcome probabilities against the actual remaining shoe composition, rather than looked up from a static chart.
