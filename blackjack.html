@@ -1464,7 +1464,7 @@ function makeCubicBezier(x1, y1, x2, y2){
 const dealEase = makeCubicBezier(0.16, 1, 0.3, 1);
 // How long each individual card's own flight animation takes (see
 // Render.dealCardArc).
-const CARD_FLIGHT_MS = 900;
+const CARD_FLIGHT_MS = 700;
 // Shared pacing for ALL card-dealing motion — initial deal, hits, splits,
 // and dealer draws all read from this one place, so the whole game feels
 // consistent rather than some moments fast and others slow.
@@ -1473,13 +1473,13 @@ const CARD_FLIGHT_MS = 900;
 // dealer-turn step()) uses this as a `sleep`/`setTimeout` gap that's
 // awaited BEFORE dealing the next card — i.e. measured from when the
 // PREVIOUS card started flying, not from when it landed. To get an actual
-// ~750ms pause AFTER a card lands and BEFORE the next one starts, this
+// ~550ms pause AFTER a card lands and BEFORE the next one starts, this
 // therefore has to cover the full CARD_FLIGHT_MS flight plus the pause on
-// top of it (900ms flight + 750ms pause = 1650ms between successive
-// dealCardTo() calls) — using 750ms alone here would still leave cards
+// top of it (700ms flight + 550ms pause = 1250ms between successive
+// dealCardTo() calls) — using 550ms alone here would still leave cards
 // overlapping (starting ~150ms before the previous one even lands).
 // Reduced-motion keeps things fast since the arc itself is skipped there.
-const CARD_LANDING_PAUSE_MS = 750;
+const CARD_LANDING_PAUSE_MS = 550;
 function cardDealDelay(){ return prefersReducedMotion() ? 70 : CARD_FLIGHT_MS + CARD_LANDING_PAUSE_MS; }
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -2351,18 +2351,30 @@ const Advisor = {
     return {results, best, bookCode, comp, upGroup, s17, total, softAces};
   },
 
+  _pulseTimeout: null,
+
   // Highlights/pulses whichever action button matches `code`. Forces a
   // reflow between removing and re-adding the class so the CSS animation
   // reliably restarts from the beginning on every call, even when the same
   // action is recommended twice in a row (otherwise a remove+add with no
   // reflow in between can be coalesced by the browser into a no-op change,
   // leaving the animation running mid-cycle instead of blinking anew).
+  // The pulse auto-stops after 2s so it never loops forever in the
+  // background; a fresh call always clears any pending stop-timer first, so
+  // re-triggering the hint (or clicking it again) restarts the full 2s
+  // window instead of stacking multiple timeouts.
   highlightButton(code){
     document.querySelectorAll('#actionRow [data-action]').forEach(b => b.classList.remove('reveal-highlight'));
     const btn = document.querySelector(`#actionRow [data-action="${ACTION_TO_DATA[code]}"]`);
+    if (this._pulseTimeout){ clearTimeout(this._pulseTimeout); this._pulseTimeout = null; }
     if (btn){
       void btn.offsetWidth; // force reflow so the animation restarts
       btn.classList.add('reveal-highlight');
+      this._pulseTimeout = setTimeout(() => {
+        btn.classList.remove('reveal-highlight');
+        btn.style.animation = '';
+        this._pulseTimeout = null;
+      }, 2000);
     }
     return btn;
   },
@@ -2389,6 +2401,7 @@ const Advisor = {
   close(){
     this.open = false;
     this.disarmOutsideClickClose();
+    if (this._pulseTimeout){ clearTimeout(this._pulseTimeout); this._pulseTimeout = null; }
     document.getElementById('showOddsBtn').classList.remove('open');
     document.getElementById('sidePanel').classList.remove('open');
     document.querySelectorAll('#actionRow [data-action]').forEach(b => b.classList.remove('reveal-highlight'));
