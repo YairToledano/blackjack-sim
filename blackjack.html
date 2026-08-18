@@ -1464,7 +1464,7 @@ function makeCubicBezier(x1, y1, x2, y2){
 const dealEase = makeCubicBezier(0.16, 1, 0.3, 1);
 // How long each individual card's own flight animation takes (see
 // Render.dealCardArc).
-const CARD_FLIGHT_MS = 700;
+const CARD_FLIGHT_MS = 600;
 // Shared pacing for ALL card-dealing motion — initial deal, hits, splits,
 // and dealer draws all read from this one place, so the whole game feels
 // consistent rather than some moments fast and others slow.
@@ -1479,7 +1479,7 @@ const CARD_FLIGHT_MS = 700;
 // dealCardTo() calls) — using 550ms alone here would still leave cards
 // overlapping (starting ~150ms before the previous one even lands).
 // Reduced-motion keeps things fast since the arc itself is skipped there.
-const CARD_LANDING_PAUSE_MS = 550;
+const CARD_LANDING_PAUSE_MS = 450;
 function cardDealDelay(){ return prefersReducedMotion() ? 70 : CARD_FLIGHT_MS + CARD_LANDING_PAUSE_MS; }
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
