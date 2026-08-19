@@ -436,19 +436,26 @@ body::before{
 }
 
 /* ============================================================
-   LOADING SCREEN — shown immediately on page load (before any
-   game JS has run), faded out once UI.init() has produced the
-   first real render. Uses the same felt/gold palette as the
-   table itself so there is no jarring switch in look.
+   LOADING SCREEN & HOME SCREEN — both are full-viewport felt/gold
+   overlays shown before the table itself: the loading screen immediately
+   on page load (before any game JS has run), faded out once UI.init() has
+   produced the first real render; the home screen right after that, until
+   "Play at the Table" is pressed. Sharing .full-screen-felt keeps their
+   look identical to the table's own palette, so neither is a jarring
+   switch. z-index order (highest first): loading screen (covers
+   everything during boot) > update toast > home screen (covers the table
+   underneath) > table content.
    ============================================================ */
-#loadingScreen{
-  position:fixed;inset:0;z-index:9999;
+.full-screen-felt{
+  position:fixed;inset:0;
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:22px;
   background:
     radial-gradient(ellipse at 50% 40%, var(--felt-light) 0%, var(--felt) 55%, var(--felt-dark) 100%);
-  transition:opacity .5s ease;
+  padding:16px;box-sizing:border-box;text-align:center;
 }
+#loadingScreen{z-index:9999;transition:opacity .5s ease;}
 #loadingScreen.fade-out{opacity:0;pointer-events:none;}
+#homeScreen{z-index:200;}
 .loading-logo{
   font-family:var(--serif);font-size:1.8rem;letter-spacing:.05em;color:var(--gold-light);
   text-shadow:0 2px 10px rgba(0,0,0,.6);text-align:center;
@@ -463,6 +470,13 @@ body::before{
 @keyframes loadingSpin{ to{ transform:rotate(360deg); } }
 @media (prefers-reduced-motion: reduce){
   .loading-spinner{animation:none;}
+}
+.home-actions{display:flex;flex-direction:column;align-items:center;gap:14px;}
+.home-btn{min-width:220px;font-size:.92rem;padding:13px 20px;}
+.home-btn-group{display:flex;flex-direction:column;align-items:center;gap:4px;}
+.home-soon-note{font-family:var(--sans);font-size:.68rem;letter-spacing:.05em;color:var(--gold-dim);}
+@media (max-width:480px){
+  .home-btn{min-width:0;width:100%;max-width:280px;}
 }
 
 /* Small, unobtrusive toast telling the player a new version of the game
@@ -484,12 +498,28 @@ body::before{
 </style>
 </head>
 <body>
-<div id="loadingScreen">
+<div id="loadingScreen" class="full-screen-felt">
   <div class="loading-logo">♠ Vegas Strip Blackjack<small>SHUFFLING THE SHOE&hellip;</small></div>
   <div class="loading-spinner"></div>
 </div>
 <div id="swUpdateToast" class="hidden" role="button" tabindex="0">🔄 Update available — tap to refresh</div>
-<div class="wrap">
+
+<!-- HOME / LANDING SCREEN — shown first, before the table. "Play at the
+     Table" reveals the existing game unchanged; "Count Training" is a
+     placeholder for a later update. Returning here from mid-game (the
+     topbar's 🏠 Home button) is handled by Flow.goHome(). -->
+<div id="homeScreen" class="full-screen-felt hidden">
+  <div class="loading-logo">♠ Vegas Strip Blackjack<small>6-DECK &middot; S17 &middot; DAS &middot; LATE SURRENDER</small></div>
+  <div class="home-actions">
+    <button class="btn primary home-btn" id="playTableBtn">🃏 Play at the Table</button>
+    <div class="home-btn-group">
+      <button class="btn ghost home-btn" id="countTrainingBtn" disabled>🔢 Count Training</button>
+      <span class="home-soon-note">Coming soon</span>
+    </div>
+  </div>
+</div>
+
+<div class="wrap hidden" id="tableWrap">
 
   <div class="topbar">
     <div class="brand">♠ Vegas Strip Blackjack<small>6-DECK &middot; S17 &middot; DAS &middot; LATE SURRENDER</small></div>
@@ -511,6 +541,7 @@ body::before{
         <span class="switch-track"><span class="switch-knob"></span></span>
       </label>
       <div class="topbar-buttons">
+        <button class="icon-btn" id="homeBtn" title="Return to the home screen">🏠 Home</button>
         <button class="icon-btn" id="statsBtn">📊 Stats</button>
         <button class="icon-btn" id="settingsBtn" title="Settings &amp; preferences">☰</button>
       </div>
@@ -1342,6 +1373,13 @@ const Game = {
   insuranceBet: 0,
   lastBet: 0,
   handIdSeq: 0,
+  // Bumped only by Flow.goHome(). Every in-flight async step (card-dealing
+  // sequences, the dealer-turn loop, the post-round auto-deal timer) checks
+  // its own epoch snapshot against this before touching Game state, so
+  // leaving mid-hand cleanly abandons whatever was still in flight instead
+  // of letting it keep mutating state — or auto-dealing a new hand — in the
+  // background after the player is back on the home screen.
+  epoch: 0,
 
   init(){
     this.shoe = new Shoe(Rules);
@@ -1994,6 +2032,7 @@ const Flow = {
     Advisor.close();
     Game.reshuffleIfNeeded();
     Game.phase = 'dealing';
+    const epoch = Game.epoch; // see Game.epoch — aborts this sequence if goHome() runs mid-deal
     Game.bankroll -= Game.pendingBet;
     Game.lastBet = Game.pendingBet;
     Game.lastBetChips = Game.betChips.slice();
@@ -2010,15 +2049,19 @@ const Flow = {
 
     const DEAL_DELAY = cardDealDelay(); // shared pacing — see cardDealDelay()
     await sleep(DEAL_DELAY);
+    if (epoch !== Game.epoch) return;
     dealCardTo(playerCards, true);               // 1. player card
     Render.renderAll();
     await sleep(DEAL_DELAY);
+    if (epoch !== Game.epoch) return;
     dealCardTo(Game.dealerCards, true);           // 2. dealer up-card, face up
     Render.renderAll();
     await sleep(DEAL_DELAY);
+    if (epoch !== Game.epoch) return;
     dealCardTo(playerCards, true);                // 3. player card
     Render.renderAll();
     await sleep(DEAL_DELAY);
+    if (epoch !== Game.epoch) return;
     dealCardTo(Game.dealerCards, false);          // 4. dealer hole card, face down (unseen -> not counted yet)
     Render.renderAll();
 
@@ -2048,7 +2091,11 @@ const Flow = {
       if (Game.insuranceBet > 0){
         Game.bankroll += Game.insuranceBet * 3; // stake back + 2:1
       }
-      setTimeout(() => this.settleAllVsDealerBlackjack(), prefersReducedMotion() ? 0 : 950);
+      const epoch = Game.epoch;
+      setTimeout(() => {
+        if (epoch !== Game.epoch) return; // see Game.epoch — abandoned via goHome()
+        this.settleAllVsDealerBlackjack();
+      }, prefersReducedMotion() ? 0 : 950);
       return;
     }
     // no dealer blackjack: insurance bet (if any) is lost, already deducted
@@ -2150,7 +2197,9 @@ const Flow = {
     const h = Game.hands[idx];
     h.status = 'active';
     Render.renderAll();
+    const epoch = Game.epoch; // see Game.epoch — aborts if goHome() runs mid-split
     await sleep(cardDealDelay());
+    if (epoch !== Game.epoch) return;
     dealCardTo(h.cards, true);
     if (h.isSplitAces && !Rules.hitSplitAces){
       h.status = HandUtil.isBust(h.cards) ? 'bust' : 'stood';
@@ -2182,7 +2231,9 @@ const Flow = {
     CountEngine.reveal(Game.dealerCards[1]);
     Render.revealHoleCard();
     Render.renderCount();
+    const epoch = Game.epoch; // see Game.epoch — aborts this loop if goHome() runs mid-dealer-turn
     const step = () => {
+      if (epoch !== Game.epoch) return;
       const {total, softAces} = HandUtil.compute(Game.dealerCards);
       const mustHit = needsPlay && (total < 17 || (total === 17 && softAces > 0 && Rules.h17));
       if (!needsPlay || !mustHit){
@@ -2266,14 +2317,55 @@ const Flow = {
       Game.pendingBet = 0;
       Game.betChips = [];
     }
+    const epoch = Game.epoch; // see Game.epoch — abandoned via goHome()
     setTimeout(() => {
+      if (epoch !== Game.epoch) return;
       Render.renderAll();
       // Only ever reached once the hand is FULLY settled (finishRound is
       // exclusively called from settle() / settleAllVsDealerBlackjack(),
       // never mid-insurance, mid-split, or any other unresolved state), so
       // it's always safe to consider auto-dealing the next hand here.
-      if (AutoDeal.enabled) setTimeout(() => AutoDeal.trigger(), 1300);
+      if (AutoDeal.enabled) setTimeout(() => {
+        if (epoch !== Game.epoch) return;
+        AutoDeal.trigger();
+      }, 1300);
     }, 50);
+  },
+  // Abandons whatever hand/round is currently in flight and returns to a
+  // clean betting-phase state before showing the home screen again — wired
+  // to the topbar's 🏠 Home button in UI.init(). Any bet(s) already wagered
+  // on a hand that never got a result are refunded (leaving mid-hand
+  // shouldn't just silently forfeit the player's money); bumping
+  // Game.epoch is what makes every pending async chain (card-dealing
+  // sequences, the dealer-turn loop, the post-round auto-deal timer) see
+  // itself as stale and no-op instead of continuing in the background.
+  goHome(){
+    Game.epoch++;
+    AutoDeal.enabled = false;
+    document.getElementById('autoDealToggle').checked = false;
+    Advisor.close();
+    BetSuggestion.hide();
+    document.getElementById('settingsModal').classList.add('hidden');
+    document.getElementById('statsModal').classList.add('hidden');
+    CountPeek.hide();
+
+    let refund = Game.insuranceBet;
+    Game.hands.forEach(h => { if (h.result === null) refund += h.bet; });
+    Game.bankroll += refund;
+
+    Game.hands = [];
+    Game.activeHandIndex = -1;
+    Game.dealerCards = [];
+    Game.dealerHoleRevealed = false;
+    Game.insuranceBet = 0;
+    Game.pendingBet = 0;
+    Game.betChips = [];
+    Game.phase = 'betting';
+    Render.clearResult();
+    Render.renderAll();
+
+    document.getElementById('tableWrap').classList.add('hidden');
+    document.getElementById('homeScreen').classList.remove('hidden');
   }
 };
 
@@ -2538,6 +2630,16 @@ const UI = {
   addChip(v){ Flow.startBet(v); },
   init(){
     Render.renderChipRack();
+    // Home screen: "Play at the Table" reveals the existing game exactly
+    // as-is (seat selection is a later update, not built yet). "Count
+    // Training" stays disabled — it's a placeholder for a later mode, not
+    // wired to anything. The 🏠 Home button (always in the topbar) does a
+    // full clean reset via Flow.goHome() before showing the home screen.
+    document.getElementById('playTableBtn').addEventListener('click', () => {
+      document.getElementById('homeScreen').classList.add('hidden');
+      document.getElementById('tableWrap').classList.remove('hidden');
+    });
+    document.getElementById('homeBtn').addEventListener('click', () => Flow.goHome());
     document.getElementById('clearBetBtn').addEventListener('click', () => Flow.clearBet());
     document.getElementById('rebetBtn').addEventListener('click', () => Flow.rebet());
     document.getElementById('dealBtn').addEventListener('click', () => { Sound.ensureCtx(); Flow.deal(); });
@@ -2749,6 +2851,8 @@ document.addEventListener('DOMContentLoaded', () => {
   setTimeout(() => {
     loadingScreen.classList.add('fade-out');
     loadingScreen.addEventListener('transitionend', () => loadingScreen.remove(), {once:true});
+    // The home screen — not the table — is what's revealed underneath.
+    document.getElementById('homeScreen').classList.remove('hidden');
   }, 400);
 });
 
