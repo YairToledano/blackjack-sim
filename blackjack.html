@@ -479,6 +479,46 @@ body::before{
   .home-btn{min-width:0;width:100%;max-width:280px;}
 }
 
+/* SEAT SELECTION — 5 seats in a shallow arc (a cheap, safe stand-in for
+   true circular table geometry: each seat's own vertical offset via
+   nth-child, no absolute positioning/overflow risk). Hover is color-only
+   (no transform) specifically so it never fights the arc offset. */
+.seat-row{display:flex;gap:14px;align-items:flex-end;justify-content:center;flex-wrap:wrap;margin:4px 0;max-width:520px;}
+.seat-row > :nth-child(1),.seat-row > :nth-child(5){transform:translateY(16px);}
+.seat-row > :nth-child(2),.seat-row > :nth-child(4){transform:translateY(6px);}
+.seat-btn{
+  display:flex;flex-direction:column;align-items:center;gap:4px;
+  width:74px;padding:10px 6px;border-radius:14px;cursor:pointer;
+  font-family:var(--sans);background:rgba(0,0,0,.3);
+  border:2px dashed var(--gold-dim);color:#cfd8cf;
+  transition:border-color .15s,background .15s;
+}
+.seat-btn:hover{border-color:var(--gold);}
+.seat-btn .seat-num{font-family:var(--serif);font-size:1.15rem;color:var(--gold-light);line-height:1;}
+.seat-btn .seat-state{font-size:.66rem;letter-spacing:.05em;text-transform:uppercase;}
+.seat-btn.state-player{border-style:solid;border-color:var(--gold);background:linear-gradient(180deg,rgba(212,175,55,.3),rgba(212,175,55,.12));}
+.seat-btn.state-player .seat-state{color:var(--gold-light);font-weight:700;}
+.seat-btn.state-bot{border-style:solid;border-color:rgba(150,180,220,.55);background:rgba(90,130,180,.16);}
+.seat-btn.state-bot .seat-state{color:#a9c6e8;}
+.seat-actions{display:flex;gap:14px;margin-top:8px;}
+@media (max-width:480px){
+  .seat-row{gap:10px;}
+  .seat-btn{width:62px;padding:8px 4px;}
+}
+
+/* Only shown when more than one seat is occupied — see
+   Render.renderSeatBetRow(). Small pill switcher, same resting chrome as
+   .mini-toggle, so the chip rack always visibly reads as "acting on the
+   highlighted seat". */
+.seat-bet-row{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;}
+.seat-bet-pill{
+  font-family:var(--sans);font-size:.7rem;font-weight:600;color:#cfd8cf;
+  background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.1);border-radius:999px;
+  padding:5px 11px;cursor:pointer;transition:border-color .15s,background .15s,color .15s;
+}
+.seat-bet-pill.funded{color:var(--gold-light);}
+.seat-bet-pill.active{border-color:var(--gold);background:rgba(212,175,55,.18);box-shadow:0 0 0 1px rgba(212,175,55,.35);}
+
 /* Small, unobtrusive toast telling the player a new version of the game
    has just taken over in the background (see the service-worker update
    flow near the bottom of this file) — tap it to reload and start using
@@ -516,6 +556,19 @@ body::before{
       <button class="btn ghost home-btn" id="countTrainingBtn" disabled>🔢 Count Training</button>
       <span class="home-soon-note">Coming soon</span>
     </div>
+  </div>
+</div>
+
+<!-- SEAT SELECTION — the step between the home screen and the table.
+     Tapping a seat cycles it Empty -> You -> Bot -> Empty (SeatSelect.cycle);
+     at least one seat must be "You" before Confirm Seats unlocks. Seats are
+     rendered by SeatSelect.render() into #seatRow. -->
+<div id="seatScreen" class="full-screen-felt hidden">
+  <div class="loading-logo">Choose Your Seats<small>TAP A SEAT TO SIT &middot; TAP AGAIN FOR BOT OR EMPTY</small></div>
+  <div class="seat-row" id="seatRow"></div>
+  <div class="seat-actions">
+    <button class="btn ghost home-btn" id="seatBackBtn">🏠 Home</button>
+    <button class="btn primary home-btn" id="confirmSeatsBtn" disabled>Confirm Seats</button>
   </div>
 </div>
 
@@ -586,6 +639,11 @@ body::before{
   </div>
 
   <div class="controls">
+    <!-- Only shown/populated when more than one seat is occupied this
+         round (Render.renderSeatBetRow) — lets the player see and switch
+         which occupied seat's independent bet the chip rack below is
+         currently acting on (Flow.switchBetSeat). -->
+    <div class="seat-bet-row hidden" id="seatBetRow"></div>
     <div class="chip-rack" id="chipRack"></div>
     <div class="bet-row" id="betRow">
       <button class="btn ghost" id="clearBetBtn">Clear Bet</button>
@@ -1373,6 +1431,18 @@ const Game = {
   insuranceBet: 0,
   lastBet: 0,
   handIdSeq: 0,
+  // SEATS — 5 table positions, each 'empty' | 'bot' | 'player' (see
+  // SeatSelect). Bot behaves identically to empty until bot logic exists.
+  // playerSeats is the ordered (by seat index) list of seats the player
+  // occupies for the CURRENT confirmed configuration; each becomes its own
+  // hand in Game.hands at deal time, played through the exact same
+  // sequential activeHandIndex/nextHandOrDealer() rotation already used
+  // for split hands. activeBetSeat/seatBets track independent in-progress
+  // bets per seat during the betting phase — see Flow.switchBetSeat().
+  seats: ['empty', 'empty', 'empty', 'empty', 'empty'],
+  playerSeats: [],
+  activeBetSeat: null,
+  seatBets: {}, // seat index -> {amount, chips[]} for seats OTHER than activeBetSeat
   // Bumped only by Flow.goHome(). Every in-flight async step (card-dealing
   // sequences, the dealer-turn loop, the post-round auto-deal timer) checks
   // its own epoch snapshot against this before touching Game state, so
@@ -1407,8 +1477,22 @@ const Game = {
       status: 'active',      // active | stood | bust | doubled | surrendered | blackjack
       isSplitAces: false,
       fromSplit: false,
+      seat: null,             // which table seat this hand belongs to (null for pre-seat-selection code paths)
       result: null
     };
+  },
+
+  // The current bet amount for a given occupied seat during the betting
+  // phase — the active seat's live figure is Game.pendingBet itself; every
+  // other occupied seat's in-progress bet is parked in Game.seatBets (see
+  // Flow.switchBetSeat()).
+  seatBetAmount(seat){
+    if (seat === this.activeBetSeat) return this.pendingBet;
+    return this.seatBets[seat] ? this.seatBets[seat].amount : 0;
+  },
+  allSeatsBetPlaced(){
+    if (!this.playerSeats.length) return false;
+    return this.playerSeats.every(seat => this.seatBetAmount(seat) > 0);
   }
 };
 
@@ -1768,7 +1852,13 @@ const Render = {
       if (Game.hands.length > 1){
         const tag = document.createElement('div');
         tag.className = 'hand-tag';
-        tag.textContent = 'Hand ' + (idx+1);
+        // "Seat N" when more than one table seat is in play this round (so
+        // it's clear whose hand is whose), otherwise the original "Hand N"
+        // (a single occupied seat that's been split still just says "Hand
+        // N" — unchanged from before seats existed).
+        tag.textContent = (Game.playerSeats.length > 1 && h.seat != null)
+          ? 'Seat ' + (h.seat + 1)
+          : 'Hand ' + (idx + 1);
         g.appendChild(tag);
       }
       const cardsEl = document.createElement('div');
@@ -1815,7 +1905,9 @@ const Render = {
       c.innerHTML = chipSVG(v);
       el.appendChild(c);
     });
-    document.getElementById('betAmount').textContent = total > 0 ? ('$' + total) : 'Place a bet';
+    const seatPrefix = (Game.phase === 'betting' && Game.playerSeats.length > 1)
+      ? `Seat ${Game.activeBetSeat + 1} — ` : '';
+    document.getElementById('betAmount').textContent = seatPrefix + (total > 0 ? ('$' + total) : 'Place a bet');
   },
   renderChipRack(){
     const rack = document.getElementById('chipRack');
@@ -1865,6 +1957,32 @@ const Render = {
     document.getElementById('showOddsBtn').classList.toggle('hidden', hidden);
     if (hidden && Advisor.open) Advisor.close();
   },
+  // A small row of "Seat N: $amount" pills, one per occupied player seat —
+  // only shown once more than one seat is in play, letting the player see
+  // and switch which seat's independent bet the chip rack / betting circle
+  // are currently acting on (see Flow.switchBetSeat()). A single occupied
+  // seat never shows this row at all, leaving that flow visually identical
+  // to the original single-bet betting UI.
+  renderSeatBetRow(){
+    const row = document.getElementById('seatBetRow');
+    if (Game.phase !== 'betting' || Game.playerSeats.length <= 1){
+      row.classList.add('hidden');
+      row.innerHTML = '';
+      return;
+    }
+    row.classList.remove('hidden');
+    row.innerHTML = '';
+    Game.playerSeats.forEach(seat => {
+      const amt = Game.seatBetAmount(seat);
+      const btn = document.createElement('button');
+      btn.className = 'seat-bet-pill'
+        + (seat === Game.activeBetSeat ? ' active' : '')
+        + (amt > 0 ? ' funded' : '');
+      btn.textContent = `Seat ${seat + 1}: $${amt}`;
+      btn.addEventListener('click', () => Flow.switchBetSeat(seat));
+      row.appendChild(btn);
+    });
+  },
   renderAll(){
     this.renderDealer();
     this.renderHands();
@@ -1872,10 +1990,11 @@ const Render = {
     this.renderBankroll();
     this.renderChipsInPlay();
     this.renderActionButtons();
+    this.renderSeatBetRow();
     this.renderCount();
     const dealBtn = document.getElementById('dealBtn');
-    dealBtn.disabled = !(Game.phase === 'betting' && Game.pendingBet > 0);
-    document.getElementById('rebetBtn').disabled = !(Game.phase === 'betting' && Game.lastBet > 0 && Game.pendingBet === 0);
+    dealBtn.disabled = !(Game.phase === 'betting' && Game.allSeatsBetPlaced());
+    document.getElementById('rebetBtn').disabled = !(Game.phase === 'betting' && Game.playerSeats.length === 1 && Game.lastBet > 0 && Game.pendingBet === 0);
     document.getElementById('clearBetBtn').disabled = !(Game.phase === 'betting' && Game.pendingBet > 0);
     document.getElementById('insuranceBox').classList.toggle('hidden', Game.phase !== 'insurance');
     document.getElementById('betRow').style.display = (Game.phase === 'betting') ? 'flex' : 'none';
@@ -1923,7 +2042,14 @@ Game.legalActions = function(){
   if (h.cards.length === 2 && HandUtil.isPairEligible(h.cards) && this.hands.length < 4 && this.bankroll >= h.bet){
     if (!(h.isSplitAces)) legal.split = true; // aces split only once
   }
-  if (h.cards.length === 2 && !h.fromSplit && this.hands.length === 1 && Rules.surrender){
+  // Surrender is only ever about THIS hand's own history (an un-split,
+  // still-original 2-card hand) — never about how many OTHER hands are on
+  // the table right now. Any hand with fromSplit=true is already excluded
+  // above regardless, so this doesn't relax anything for the pre-existing
+  // single-seat/split case; it only stops multi-seat rounds from
+  // incorrectly blocking surrender on every hand just because more than
+  // one seat is in play.
+  if (h.cards.length === 2 && !h.fromSplit && Rules.surrender){
     legal.surrender = true;
   }
   return legal;
@@ -1995,6 +2121,24 @@ const Flow = {
     Game.betChips = [];
     Render.renderAll();
   },
+  // Switches which occupied seat the chip rack / betting circle / Clear
+  // Bet / Rebet / Suggest Bet are currently acting on — only relevant when
+  // more than one seat is occupied (see the seat-bet-row UI, only shown in
+  // that case). The seat being LEFT has its live pendingBet/betChips
+  // parked in Game.seatBets; the seat being ENTERED has its parked amount
+  // (or $0, if never bet on yet) restored into pendingBet/betChips, so all
+  // the existing single-bet UI/logic keeps working unmodified — it always
+  // just operates on "whichever seat is active right now".
+  switchBetSeat(seat){
+    if (Game.phase !== 'betting' || seat === Game.activeBetSeat) return;
+    Game.seatBets[Game.activeBetSeat] = { amount: Game.pendingBet, chips: Game.betChips.slice() };
+    const parked = Game.seatBets[seat];
+    Game.pendingBet = parked ? parked.amount : 0;
+    Game.betChips = parked ? parked.chips.slice() : [];
+    Game.activeBetSeat = seat;
+    BetSuggestion.hide();
+    Render.renderAll();
+  },
   rebet(){
     if (Game.phase !== 'betting' || !Game.lastBet) return;
     if (Game.bankroll < Game.lastBet) return;
@@ -2022,44 +2166,64 @@ const Flow = {
     }
     BetSuggestion.show(text, false);
   },
-  // Deals the opening hand as a natural, human-paced sequence rather than
-  // all at once: player card 1 -> dealer up-card -> player card 2 -> dealer
-  // hole card, each separated by a short readable pause. Game.phase is set
-  // to the transient 'dealing' state for the duration so a rapid double
-  // click on Deal can't re-enter this while cards are still in the air.
+  // Deals the opening round as a natural, human-paced sequence rather than
+  // all at once: one card to each occupied seat in seat order, then the
+  // dealer's up-card, then a second card to each seat in seat order, then
+  // the dealer's hole card — the standard round-robin casino deal, and a
+  // direct generalization of the original single-hand 4-step sequence (for
+  // exactly one occupied seat this reduces to precisely that sequence).
+  // Game.phase is set to the transient 'dealing' state for the duration so
+  // a rapid double click on Deal can't re-enter this while cards are still
+  // in the air.
   async deal(){
-    if (Game.phase !== 'betting' || Game.pendingBet <= 0) return;
+    if (Game.phase !== 'betting' || !Game.allSeatsBetPlaced()) return;
     Advisor.close();
     Game.reshuffleIfNeeded();
     Game.phase = 'dealing';
     const epoch = Game.epoch; // see Game.epoch — aborts this sequence if goHome() runs mid-deal
-    Game.bankroll -= Game.pendingBet;
-    Game.lastBet = Game.pendingBet;
-    Game.lastBetChips = Game.betChips.slice();
-    const bet = Game.pendingBet;
+
+    const seatBetsFinal = Game.playerSeats.map(seat => ({ seat, amt: Game.seatBetAmount(seat) }));
+    const totalBet = seatBetsFinal.reduce((s, x) => s + x.amt, 0);
+    Game.bankroll -= totalBet;
+    if (Game.playerSeats.length === 1){
+      // Single-seat round: keep behaving exactly like the original
+      // single-hand carry-forward (Rebet / Auto Deal / finishRound's
+      // "leave the same bet on the table" convenience), unchanged.
+      Game.lastBet = seatBetsFinal[0].amt;
+      Game.lastBetChips = Game.betChips.slice();
+    }
     Game.pendingBet = 0;
+    Game.betChips = [];
+    Game.seatBets = {};
     Game.dealerCards = [];
     Game.dealerHoleRevealed = false;
     Game.insuranceBet = 0;
     Render.clearResult();
-    const playerCards = [];
-    Game.hands = [Game.newHand(playerCards, bet)];
+    Game.hands = seatBetsFinal.map(({seat, amt}) => {
+      const h = Game.newHand([], amt);
+      h.seat = seat;
+      return h;
+    });
     Game.activeHandIndex = 0;
     Render.renderAll();
 
     const DEAL_DELAY = cardDealDelay(); // shared pacing — see cardDealDelay()
-    await sleep(DEAL_DELAY);
-    if (epoch !== Game.epoch) return;
-    dealCardTo(playerCards, true);               // 1. player card
-    Render.renderAll();
+    for (const h of Game.hands){                 // 1. first card, one per occupied seat in seat order
+      await sleep(DEAL_DELAY);
+      if (epoch !== Game.epoch) return;
+      dealCardTo(h.cards, true);
+      Render.renderAll();
+    }
     await sleep(DEAL_DELAY);
     if (epoch !== Game.epoch) return;
     dealCardTo(Game.dealerCards, true);           // 2. dealer up-card, face up
     Render.renderAll();
-    await sleep(DEAL_DELAY);
-    if (epoch !== Game.epoch) return;
-    dealCardTo(playerCards, true);                // 3. player card
-    Render.renderAll();
+    for (const h of Game.hands){                  // 3. second card, one per occupied seat in seat order
+      await sleep(DEAL_DELAY);
+      if (epoch !== Game.epoch) return;
+      dealCardTo(h.cards, true);
+      Render.renderAll();
+    }
     await sleep(DEAL_DELAY);
     if (epoch !== Game.epoch) return;
     dealCardTo(Game.dealerCards, false);          // 4. dealer hole card, face down (unseen -> not counted yet)
@@ -2076,7 +2240,12 @@ const Flow = {
   insuranceDecision(taken){
     if (Game.phase !== 'insurance') return;
     if (taken){
-      Game.insuranceBet = Math.floor(Game.hands[0].bet / 2);
+      // Basis is the SUM of every hand's bet — one insurance side bet
+      // covering the whole table's action, not just a single hand.
+      // Reduces to the original Game.hands[0].bet/2 exactly when there's
+      // only one hand.
+      const totalBet = Game.hands.reduce((s, h) => s + h.bet, 0);
+      Game.insuranceBet = Math.floor(totalBet / 2);
       Game.bankroll -= Game.insuranceBet;
     }
     this.resolvePeekAndContinue(Game.dealerCards[0].group);
@@ -2098,22 +2267,36 @@ const Flow = {
       }, prefersReducedMotion() ? 0 : 950);
       return;
     }
-    // no dealer blackjack: insurance bet (if any) is lost, already deducted
-    const h = Game.hands[0];
-    if (HandUtil.isBlackjack(h.cards)){
-      // Player has a natural 21 and the dealer has already been confirmed
-      // (via peek, when up=A/10) or is structurally guaranteed (up=2-9,
-      // where a natural blackjack is impossible) NOT to also have one — so
-      // this hand is unbeatable. The dealer's hole card is revealed for
-      // display only; needsPlay=false means the dealer does NOT draw
-      // further cards to reach 17+, since no two-card dealer hand can ever
-      // beat (only push, already ruled out) a natural 21.
-      h.status = 'blackjack';
+    // No dealer blackjack: insurance bet (if any) is lost, already
+    // deducted. Mark every hand that has its own natural 21 as unbeatable
+    // — generalizes the original single-hand check to N seats — and start
+    // the player turn at the first hand that ISN'T already resolved this
+    // way (reduces to activeHandIndex=0 exactly as before when there's
+    // only one hand and it's not blackjack). If EVERY hand is already a
+    // natural blackjack, there's nothing left to play — go straight to the
+    // dealer's reveal, same as the original single-hand case.
+    let anyActive = false;
+    Game.hands.forEach(h => {
+      if (HandUtil.isBlackjack(h.cards)){
+        // A natural 21 is unbeatable here: the dealer has already been
+        // confirmed (via peek, when up=A/10) or is structurally guaranteed
+        // (up=2-9, where a natural blackjack is impossible) NOT to also
+        // have one, so no two-card dealer hand can ever beat (only push,
+        // already ruled out) this hand.
+        h.status = 'blackjack';
+      } else {
+        anyActive = true;
+      }
+    });
+    if (!anyActive){
       Game.phase = 'dealer-turn';
       Render.renderAll();
+      // needsPlay=false: no dealt hand left that the dealer could still
+      // beat, so no further dealer draws — display/reveal only.
       this.revealAndPlayDealer(false);
       return;
     }
+    Game.activeHandIndex = Game.hands.findIndex(h => h.status !== 'blackjack');
     Game.phase = 'player-turn';
     Render.renderAll();
   },
@@ -2180,6 +2363,7 @@ const Flow = {
     const handA = Game.newHand([c1], h.bet);
     const handB = Game.newHand([c2], h.bet);
     handA.fromSplit = true; handB.fromSplit = true;
+    handA.seat = h.seat; handB.seat = h.seat; // both halves stay tied to the seat that split
     handA.isSplitAces = isAces; handB.isSplitAces = isAces;
     handB.status = 'pending-split';
     const idx = Game.activeHandIndex;
@@ -2309,8 +2493,12 @@ const Flow = {
     // The player can still change it (chips, Clear Bet) before dealing;
     // this only removes the need to reconfirm the SAME amount. Independent
     // of Auto Deal below, which has its own bankroll-fallback logic and
-    // runs (or not) regardless of this.
-    if (Game.lastBet > 0 && Game.bankroll >= Game.lastBet){
+    // runs (or not) regardless of this. Only meaningful for a single
+    // occupied seat — Game.lastBet is one number, so it can't represent
+    // "the bet" for several independently-funded seats at once; a
+    // multi-seat round always starts its next betting phase fresh instead.
+    Game.seatBets = {};
+    if (Game.playerSeats.length === 1 && Game.lastBet > 0 && Game.bankroll >= Game.lastBet){
       Game.pendingBet = Game.lastBet;
       Game.betChips = Game.lastBetChips.slice();
     } else {
@@ -2360,12 +2548,64 @@ const Flow = {
     Game.insuranceBet = 0;
     Game.pendingBet = 0;
     Game.betChips = [];
+    Game.seatBets = {}; // any other seats' still-parked (never-deducted) in-progress bets are just discarded
     Game.phase = 'betting';
     Render.clearResult();
     Render.renderAll();
 
     document.getElementById('tableWrap').classList.add('hidden');
     document.getElementById('homeScreen').classList.remove('hidden');
+  }
+};
+
+/* ---------------------------------------------------------------------------
+   SEAT SELECTION — the step between the home screen and the actual table.
+   5 seats, each independently 'empty' | 'bot' | 'player' (Bot is a UI-only
+   placeholder for now — it behaves exactly like Empty until bot logic
+   exists in a later update). At least one seat must be 'player' to
+   proceed. Confirm Seats hands the confirmed, seat-ordered player seat
+   list to Game.playerSeats — everything downstream (betting, dealing,
+   turn order) treats each occupied seat as its own hand, reusing the same
+   Game.hands / activeHandIndex / nextHandOrDealer() rotation already used
+   for split hands.
+   --------------------------------------------------------------------------- */
+const SeatSelect = {
+  cycle(seat){
+    const order = ['empty', 'player', 'bot'];
+    Game.seats[seat] = order[(order.indexOf(Game.seats[seat]) + 1) % order.length];
+    this.render();
+  },
+  render(){
+    const row = document.getElementById('seatRow');
+    row.innerHTML = '';
+    Game.seats.forEach((state, seat) => {
+      const btn = document.createElement('button');
+      btn.className = 'seat-btn state-' + state;
+      const label = state === 'player' ? 'You' : (state === 'bot' ? 'Bot' : 'Empty');
+      btn.innerHTML = `<span class="seat-num">${seat + 1}</span><span class="seat-state">${label}</span>`;
+      btn.title = state === 'bot' ? 'Bot seats are a placeholder for now — coming in a later update' : '';
+      btn.addEventListener('click', () => this.cycle(seat));
+      row.appendChild(btn);
+    });
+    document.getElementById('confirmSeatsBtn').disabled = !Game.seats.some(s => s === 'player');
+  },
+  // Locks in the current seat configuration and proceeds to the existing
+  // betting/table screen. Always starts every seat's bet fresh at $0 (no
+  // carry-forward across a seat reconfiguration, to avoid pre-filling a
+  // seat with a stale amount from a completely different table layout).
+  confirm(){
+    Game.playerSeats = Game.seats
+      .map((s, i) => (s === 'player' ? i : null))
+      .filter(i => i !== null);
+    if (!Game.playerSeats.length) return;
+    Game.activeBetSeat = Game.playerSeats[0];
+    Game.seatBets = {};
+    Game.pendingBet = 0;
+    Game.betChips = [];
+    Game.phase = 'betting';
+    document.getElementById('seatScreen').classList.add('hidden');
+    document.getElementById('tableWrap').classList.remove('hidden');
+    Render.renderAll();
   }
 };
 
@@ -2385,6 +2625,11 @@ const AutoDeal = {
     // happened.
     this.enabled = document.getElementById('autoDealToggle').checked;
     if (!this.enabled || Game.phase !== 'betting') return;
+    // Game.lastBet is a single number — it can only ever represent "the"
+    // bet for exactly one occupied seat, so Auto Deal only fires for a
+    // single-seat round. With multiple seats, each needs its own bet
+    // placed independently every round; nothing to safely auto-repeat.
+    if (Game.playerSeats.length !== 1) return;
     if (!Game.lastBet){ return; } // nothing to repeat yet
     let amount = Game.lastBet;
     let note = '';
@@ -2630,15 +2875,24 @@ const UI = {
   addChip(v){ Flow.startBet(v); },
   init(){
     Render.renderChipRack();
-    // Home screen: "Play at the Table" reveals the existing game exactly
-    // as-is (seat selection is a later update, not built yet). "Count
-    // Training" stays disabled — it's a placeholder for a later mode, not
-    // wired to anything. The 🏠 Home button (always in the topbar) does a
-    // full clean reset via Flow.goHome() before showing the home screen.
+    // Home screen: "Play at the Table" goes to seat selection first (not
+    // straight to the table). "Count Training" stays disabled — it's a
+    // placeholder for a later mode, not wired to anything. The 🏠 Home
+    // button (always in the topbar) does a full clean reset via
+    // Flow.goHome() before showing the home screen again — from there,
+    // "Play at the Table" naturally leads back through seat selection,
+    // which doubles as this app's "change seats" path (bankroll/stats are
+    // untouched by goHome(), only the in-progress hand/round is reset).
     document.getElementById('playTableBtn').addEventListener('click', () => {
       document.getElementById('homeScreen').classList.add('hidden');
-      document.getElementById('tableWrap').classList.remove('hidden');
+      SeatSelect.render();
+      document.getElementById('seatScreen').classList.remove('hidden');
     });
+    document.getElementById('seatBackBtn').addEventListener('click', () => {
+      document.getElementById('seatScreen').classList.add('hidden');
+      document.getElementById('homeScreen').classList.remove('hidden');
+    });
+    document.getElementById('confirmSeatsBtn').addEventListener('click', () => SeatSelect.confirm());
     document.getElementById('homeBtn').addEventListener('click', () => Flow.goHome());
     document.getElementById('clearBetBtn').addEventListener('click', () => Flow.clearBet());
     document.getElementById('rebetBtn').addEventListener('click', () => Flow.rebet());
